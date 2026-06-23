@@ -1,0 +1,280 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SHYS Remote",
+        "description": "This integration stores learned remote signals and reacts to incoming signals through infrared receivers and transmitters.\n\nAfter setup, add devices under the integration and learn signals for each device. Output signals are sent via buttons, input signals trigger binary sensors."
+      }
+    },
+    "abort": {
+      "already_configured": "The integration is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SHYS Remote options",
+        "description": "Global settings for all devices and input signals.",
+        "data": {
+          "pulse_ms": "Input pulse duration",
+          "match_tolerance": "Signal match tolerance",
+          "debounce_ms": "Input debounce"
+        },
+        "data_description": {
+          "pulse_ms": "How long an input binary sensor stays on after a matching signal was received.",
+          "match_tolerance": "Allowed timing deviation when matching received signals against learned input patterns.",
+          "debounce_ms": "Minimum time between two triggers of the same input signal."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "device": {
+      "title": "Remote device",
+      "entry_type": "Remote device",
+      "initiate_flow": {
+        "user": "Add device",
+        "reconfigure": "Manage device"
+      },
+      "step": {
+        "user": {
+          "title": "Add device",
+          "description": "Create a device and select the infrared receiver and transmitter.",
+          "data": {
+            "device_name": "Device name",
+            "receiver_entity_id": "Infrared receiver",
+            "transmitter_entity_id": "Infrared transmitter",
+            "signal_source": "Signals"
+          },
+          "data_description": {
+            "device_name": "Name of the logical device in Home Assistant, for example TV or receiver.",
+            "receiver_entity_id": "Infrared receiver used for learning and for input signals.",
+            "transmitter_entity_id": "Infrared transmitter used to send output signals.",
+            "signal_source": "Learn signals manually later or import buttons from the bundled Flipper-IRDB during setup."
+          },
+          "data_options": {
+            "signal_source": {
+              "manual": "Learn manually later",
+              "irdb": "Import from IR database"
+            }
+          }
+        },
+        "irdb_search": {
+          "title": "Search IR database",
+          "description": "Search the bundled Flipper-IRDB for your device. Use brand, model or device type.\n\nIR data from {attribution}, licensed under {license}.",
+          "data": {
+            "irdb_query": "Search",
+            "irdb_category": "Device category"
+          },
+          "data_description": {
+            "irdb_query": "Example: Samsung TV, Sony soundbar or BN59.",
+            "irdb_category": "Optional filter to narrow results, for example TVs only."
+          },
+          "data_options": {
+            "irdb_category": {
+              "__all__": "All categories",
+              "all": "All categories"
+            }
+          }
+        },
+        "irdb_pick_remote": {
+          "title": "Select remote",
+          "description": "{count} remotes found for \"{query}\" (page {page} of {pages}).",
+          "data": {
+            "irdb_remote": "Remote"
+          },
+          "data_description": {
+            "irdb_remote": "Choose a remote to import. The signals are imported immediately after selection. Use the page entries when there are many results."
+          },
+          "data_options": {
+            "irdb_remote": {
+              "__new_search__": "↩ New search"
+            }
+          }
+        },
+        "irdb_confirm": {
+          "title": "Confirm import",
+          "description": "Import {count} signals from {remote}. {skipped} unsupported signals will be skipped.\n\nSource: {attribution} ({license})."
+        },
+        "reconfigure": {
+          "title": "Manage {device}",
+          "description": "Choose what you want to do for this device.",
+          "menu_options": {
+            "edit_device": "Edit device",
+            "learn_command": "Learn signal",
+            "delete_command": "Delete signal"
+          }
+        },
+        "edit_device": {
+          "title": "Edit device",
+          "description": "Change the name or infrared hardware for {device}.",
+          "data": {
+            "device_name": "Device name",
+            "receiver_entity_id": "Infrared receiver",
+            "transmitter_entity_id": "Infrared transmitter"
+          },
+          "data_description": {
+            "device_name": "Display name of this device in Home Assistant.",
+            "receiver_entity_id": "Infrared receiver used for learning and for input signals.",
+            "transmitter_entity_id": "Infrared transmitter used to send output signals."
+          }
+        },
+        "learn_command": {
+          "title": "Learn signal",
+          "description": "Enter a name and direction for the signal, submit the form, then press the button on the remote for {device} within the timeout.\n\nReceiver used for learning: {receiver}",
+          "data": {
+            "name": "Signal name",
+            "direction": "Direction",
+            "timeout": "Timeout (seconds)"
+          },
+          "data_description": {
+            "name": "Unique name for this signal on the device, for example power or volume_up.",
+            "direction": "Output creates a send button. Input creates a binary sensor that reacts to the signal.",
+            "timeout": "How long Home Assistant waits for the next signal after you submit this form."
+          },
+          "data_options": {
+            "direction": {
+              "output": "Send (Output)",
+              "input": "Receive (Input)"
+            }
+          }
+        },
+        "delete_command": {
+          "title": "Delete signal",
+          "description": "Select a stored signal on {device} to remove.",
+          "data": {
+            "name": "Signal"
+          },
+          "data_description": {
+            "name": "The signal and its button or binary sensor will be removed."
+          }
+        },
+        "delete_command_empty": {
+          "title": "No signals stored",
+          "description": "There are no learned signals on {device} yet. Use \"Learn signal\" first."
+        }
+      },
+      "error": {
+        "invalid_device_name": "Please enter a device name.",
+        "invalid_signal_name": "Please enter a valid signal name (letters, numbers, underscore).",
+        "invalid_receiver": "The selected entity is not a valid infrared receiver.",
+        "invalid_emitter": "The selected entity is not a valid infrared transmitter.",
+        "device_already_exists": "A device with this name already exists.",
+        "command_already_exists": "This signal already exists on the device.",
+        "learn_timeout": "No signal was received in time.",
+        "empty_signal": "The received signal did not contain timings.",
+        "learn_failed": "Learning the signal failed.",
+        "not_loaded": "SHYS Remote is not loaded. Please restart Home Assistant.",
+        "irdb_query_too_short": "Please enter at least 2 characters to search.",
+        "irdb_no_results": "No remotes were found for this search.",
+        "irdb_index_failed": "The bundled IR database could not be loaded.",
+        "irdb_download_failed": "The selected remote could not be downloaded.",
+        "irdb_remote_not_found": "The selected remote is no longer available.",
+        "irdb_no_supported_signals": "The selected remote does not contain supported signals.",
+        "irdb_import_failed": "The device could not be created. Check the Home Assistant log."
+      },
+      "abort": {
+        "signal_learned": "Signal {name} was learned for {device}.",
+        "signal_deleted": "Signal {name} was removed from {device}.",
+        "no_commands": "No signals are stored for this device yet.",
+        "already_configured": "A device with this name already exists.",
+        "reconfigure_successful": "Device settings were updated."
+      }
+    }
+  },
+  "services": {
+    "learn": {
+      "name": "Learn signal",
+      "description": "Waits for the next remote signal and stores it on the selected device.",
+      "fields": {
+        "device": {
+          "name": "Device",
+          "description": "Device slug from the integration settings, for example soundbar_buro."
+        },
+        "name": {
+          "name": "Signal name",
+          "description": "Unique signal name within the device."
+        },
+        "direction": {
+          "name": "Direction",
+          "description": "Output signals can be sent later, input signals trigger a binary sensor."
+        },
+        "receiver_entity_id": {
+          "name": "Receiver",
+          "description": "Optional override for the device's default infrared receiver."
+        },
+        "transmitter_entity_id": {
+          "name": "Transmitter",
+          "description": "Optional override for the device's default infrared transmitter."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Maximum time to wait for a signal."
+        }
+      }
+    },
+    "send": {
+      "name": "Send signal",
+      "description": "Sends a previously learned output signal.",
+      "fields": {
+        "device": {
+          "name": "Device",
+          "description": "Device slug from the integration settings."
+        },
+        "name": {
+          "name": "Signal name",
+          "description": "Name of the learned output signal."
+        }
+      }
+    },
+    "delete": {
+      "name": "Delete signal",
+      "description": "Deletes a learned signal and removes its entity.",
+      "fields": {
+        "device": {
+          "name": "Device",
+          "description": "Device slug from the integration settings."
+        },
+        "name": {
+          "name": "Signal name",
+          "description": "Name of the learned signal."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "command_already_exists": {
+      "message": "Signal '{name}' already exists on device '{device}'."
+    },
+    "command_not_found": {
+      "message": "Signal '{name}' was not found on device '{device}'."
+    },
+    "device_not_found": {
+      "message": "Device '{device}' was not found."
+    },
+    "empty_signal": {
+      "message": "The received signal did not contain timings."
+    },
+    "invalid_receiver": {
+      "message": "Entity '{entity_id}' is not an infrared receiver."
+    },
+    "invalid_emitter": {
+      "message": "Entity '{entity_id}' is not an infrared transmitter."
+    },
+    "learn_timeout": {
+      "message": "No signal received within {timeout} seconds."
+    },
+    "not_loaded": {
+      "message": "SHYS Remote is not loaded."
+    },
+    "signal_not_output": {
+      "message": "Signal '{name}' on device '{device}' is configured for input and cannot be sent."
+    },
+    "irdb_index_failed": {
+      "message": "The Flipper-IRDB index could not be loaded ({status})."
+    },
+    "irdb_download_failed": {
+      "message": "Remote '{path}' could not be downloaded (HTTP {status})."
+    }
+  }
+}

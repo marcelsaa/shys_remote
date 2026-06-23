@@ -1,0 +1,280 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SHYS Remote",
+        "description": "Diese Integration speichert angelernte Fernbedienungssignale und reagiert auf eingehende Signale über infrared Receiver und Transmitter.\n\nNach dem Einrichten kannst du Geräte hinzufügen und Signale anlernen. Output-Signale werden per Button gesendet, Input-Signale lösen Binary Sensoren aus."
+      }
+    },
+    "abort": {
+      "already_configured": "Die Integration ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SHYS Remote Einstellungen",
+        "description": "Globale Einstellungen für alle Geräte und Input-Signale.",
+        "data": {
+          "pulse_ms": "Impulsdauer Input",
+          "match_tolerance": "Signal-Toleranz",
+          "debounce_ms": "Input-Debounce"
+        },
+        "data_description": {
+          "pulse_ms": "Wie lange ein Input-Binary-Sensor nach einem passenden Signal eingeschaltet bleibt.",
+          "match_tolerance": "Erlaubte Abweichung der Timings beim Abgleich empfangener Signale mit angelernten Input-Mustern.",
+          "debounce_ms": "Mindestabstand zwischen zwei Auslösungen desselben Input-Signals."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "device": {
+      "title": "Gerät",
+      "entry_type": "Gerät",
+      "initiate_flow": {
+        "user": "Gerät hinzufügen",
+        "reconfigure": "Gerät verwalten"
+      },
+      "step": {
+        "user": {
+          "title": "Gerät hinzufügen",
+          "description": "Lege ein Gerät an und wähle den passenden infrared Receiver und Transmitter.",
+          "data": {
+            "device_name": "Gerätename",
+            "receiver_entity_id": "Infrared Receiver",
+            "transmitter_entity_id": "Infrared Transmitter",
+            "signal_source": "Signale"
+          },
+          "data_description": {
+            "device_name": "Name des logischen Geräts in Home Assistant, z. B. TV oder Receiver.",
+            "receiver_entity_id": "Infrared Receiver zum Anlernen und für Input-Signale.",
+            "transmitter_entity_id": "Infrared Transmitter zum Senden von Output-Signalen.",
+            "signal_source": "Signale später manuell anlernen oder beim Anlegen Tasten aus der mitgelieferten Flipper-IRDB importieren."
+          },
+          "data_options": {
+            "signal_source": {
+              "manual": "Später manuell anlernen",
+              "irdb": "Aus IR-Datenbank importieren"
+            }
+          }
+        },
+        "irdb_search": {
+          "title": "IR-Datenbank durchsuchen",
+          "description": "Suche in der mitgelieferten Flipper-IRDB nach deinem Gerät. Marke, Modell oder Gerätetyp reichen.\n\nIR-Daten aus {attribution}, lizenziert unter {license}.",
+          "data": {
+            "irdb_query": "Suche",
+            "irdb_category": "Gerätekategorie"
+          },
+          "data_description": {
+            "irdb_query": "Beispiel: Samsung TV, Sony Soundbar oder BN59.",
+            "irdb_category": "Optionale Einschränkung, z. B. nur TVs."
+          },
+          "data_options": {
+            "irdb_category": {
+              "__all__": "Alle Kategorien",
+              "all": "Alle Kategorien"
+            }
+          }
+        },
+        "irdb_pick_remote": {
+          "title": "Fernbedienung wählen",
+          "description": "{count} Fernbedienungen für \"{query}\" gefunden (Seite {page} von {pages}).",
+          "data": {
+            "irdb_remote": "Fernbedienung"
+          },
+          "data_description": {
+            "irdb_remote": "Fernbedienung zum Import wählen. Die Signale werden direkt nach der Auswahl importiert. Bei vielen Treffern über die Seiten-Einträge blättern."
+          },
+          "data_options": {
+            "irdb_remote": {
+              "__new_search__": "↩ Neue Suche"
+            }
+          }
+        },
+        "irdb_confirm": {
+          "title": "Import bestätigen",
+          "description": "{count} Signale von {remote} importieren. {skipped} nicht unterstützte Signale werden übersprungen.\n\nQuelle: {attribution} ({license})."
+        },
+        "reconfigure": {
+          "title": "{device} verwalten",
+          "description": "Wähle, was du für dieses Gerät tun möchtest.",
+          "menu_options": {
+            "edit_device": "Gerät bearbeiten",
+            "learn_command": "Signal anlernen",
+            "delete_command": "Signal löschen"
+          }
+        },
+        "edit_device": {
+          "title": "Gerät bearbeiten",
+          "description": "Name oder infrared Hardware für {device} ändern.",
+          "data": {
+            "device_name": "Gerätename",
+            "receiver_entity_id": "Infrared Receiver",
+            "transmitter_entity_id": "Infrared Transmitter"
+          },
+          "data_description": {
+            "device_name": "Anzeigename dieses Geräts in Home Assistant.",
+            "receiver_entity_id": "Infrared Receiver zum Anlernen und für Input-Signale.",
+            "transmitter_entity_id": "Infrared Transmitter zum Senden von Output-Signalen."
+          }
+        },
+        "learn_command": {
+          "title": "Signal anlernen",
+          "description": "Gib einen Namen und die Richtung für das Signal ein, bestätige das Formular und drücke danach innerhalb der Wartezeit die Taste auf der Fernbedienung für {device}.\n\nEmpfänger zum Anlernen: {receiver}",
+          "data": {
+            "name": "Signalname",
+            "direction": "Richtung",
+            "timeout": "Timeout (Sekunden)"
+          },
+          "data_description": {
+            "name": "Eindeutiger Name für dieses Signal am Gerät, z. B. power oder volume_up.",
+            "direction": "Output erzeugt einen Sende-Button. Input erzeugt einen Binary Sensor, der auf das Signal reagiert.",
+            "timeout": "Wie lange Home Assistant nach dem Absenden des Formulars auf das nächste Signal wartet."
+          },
+          "data_options": {
+            "direction": {
+              "output": "Senden (Output)",
+              "input": "Empfangen (Input)"
+            }
+          }
+        },
+        "delete_command": {
+          "title": "Signal löschen",
+          "description": "Wähle ein gespeichertes Signal von {device}, das entfernt werden soll.",
+          "data": {
+            "name": "Signal"
+          },
+          "data_description": {
+            "name": "Das Signal und der zugehörige Button oder Binary Sensor werden entfernt."
+          }
+        },
+        "delete_command_empty": {
+          "title": "Keine Signale gespeichert",
+          "description": "Für {device} sind noch keine Signale gespeichert. Nutze zuerst \"Signal anlernen\"."
+        }
+      },
+      "error": {
+        "invalid_device_name": "Bitte einen Gerätenamen angeben.",
+        "invalid_signal_name": "Bitte einen gültigen Signalnamen angeben (Buchstaben, Zahlen, Unterstrich).",
+        "invalid_receiver": "Der gewählte Receiver ist keine gültige infrared Receiver-Entität.",
+        "invalid_emitter": "Der gewählte Transmitter ist keine gültige infrared Emitter-Entität.",
+        "device_already_exists": "Ein Gerät mit diesem Namen existiert bereits.",
+        "command_already_exists": "Dieses Signal existiert auf dem Gerät bereits.",
+        "learn_timeout": "Innerhalb der Wartezeit wurde kein Signal empfangen.",
+        "empty_signal": "Das empfangene Signal enthielt keine Timings.",
+        "learn_failed": "Das Anlernen ist fehlgeschlagen.",
+        "not_loaded": "SHYS Remote ist nicht geladen. Bitte Home Assistant neu starten.",
+        "irdb_query_too_short": "Bitte mindestens 2 Zeichen für die Suche eingeben.",
+        "irdb_no_results": "Für diese Suche wurden keine Fernbedienungen gefunden.",
+        "irdb_index_failed": "Die mitgelieferte IR-Datenbank konnte nicht geladen werden.",
+        "irdb_download_failed": "Die gewählte Fernbedienung konnte nicht heruntergeladen werden.",
+        "irdb_remote_not_found": "Die gewählte Fernbedienung ist nicht mehr verfügbar.",
+        "irdb_no_supported_signals": "Die gewählte Fernbedienung enthält keine unterstützten Signale.",
+        "irdb_import_failed": "Das Gerät konnte nicht angelegt werden. Bitte das Home-Assistant-Protokoll prüfen."
+      },
+      "abort": {
+        "signal_learned": "Signal {name} für {device} wurde angelernt.",
+        "signal_deleted": "Signal {name} wurde von {device} entfernt.",
+        "no_commands": "Für dieses Gerät sind noch keine Signale gespeichert.",
+        "already_configured": "Ein Gerät mit diesem Namen existiert bereits.",
+        "reconfigure_successful": "Geräteeinstellungen wurden aktualisiert."
+      }
+    }
+  },
+  "services": {
+    "learn": {
+      "name": "Signal anlernen",
+      "description": "Wartet auf das nächste Fernbedienungssignal und speichert es am gewählten Gerät.",
+      "fields": {
+        "device": {
+          "name": "Gerät",
+          "description": "Geräte-Slug aus den Integrationseinstellungen, z. B. soundbar_buro."
+        },
+        "name": {
+          "name": "Signalname",
+          "description": "Eindeutiger Signalname innerhalb des Geräts."
+        },
+        "direction": {
+          "name": "Richtung",
+          "description": "Output-Signale können gesendet werden, Input-Signale lösen einen Binärsensor aus."
+        },
+        "receiver_entity_id": {
+          "name": "Empfänger",
+          "description": "Optionaler Override für den Standard-infrared-Empfänger des Geräts."
+        },
+        "transmitter_entity_id": {
+          "name": "Sender",
+          "description": "Optionaler Override für den Standard-infrared-Sender des Geräts."
+        },
+        "timeout": {
+          "name": "Timeout",
+          "description": "Maximale Wartezeit auf ein Signal."
+        }
+      }
+    },
+    "send": {
+      "name": "Signal senden",
+      "description": "Sendet ein zuvor angelerntes Output-Signal.",
+      "fields": {
+        "device": {
+          "name": "Gerät",
+          "description": "Geräte-Slug aus den Integrationseinstellungen."
+        },
+        "name": {
+          "name": "Signalname",
+          "description": "Name des angelernten Output-Signals."
+        }
+      }
+    },
+    "delete": {
+      "name": "Signal löschen",
+      "description": "Löscht ein angelerntes Signal und entfernt die zugehörige Entität.",
+      "fields": {
+        "device": {
+          "name": "Gerät",
+          "description": "Geräte-Slug aus den Integrationseinstellungen."
+        },
+        "name": {
+          "name": "Signalname",
+          "description": "Name des angelernten Signals."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "command_already_exists": {
+      "message": "Signal '{name}' existiert auf Gerät '{device}' bereits."
+    },
+    "command_not_found": {
+      "message": "Signal '{name}' wurde auf Gerät '{device}' nicht gefunden."
+    },
+    "device_not_found": {
+      "message": "Gerät '{device}' wurde nicht gefunden."
+    },
+    "empty_signal": {
+      "message": "Das empfangene Signal enthielt keine Timings."
+    },
+    "invalid_receiver": {
+      "message": "Entität '{entity_id}' ist kein infrared Receiver."
+    },
+    "invalid_emitter": {
+      "message": "Entität '{entity_id}' ist kein infrared Transmitter."
+    },
+    "learn_timeout": {
+      "message": "Innerhalb von {timeout} Sekunden wurde kein Signal empfangen."
+    },
+    "not_loaded": {
+      "message": "SHYS Remote ist nicht geladen."
+    },
+    "signal_not_output": {
+      "message": "Signal '{name}' auf Gerät '{device}' ist als Input konfiguriert und kann nicht gesendet werden."
+    },
+    "irdb_index_failed": {
+      "message": "Der Flipper-IRDB-Index konnte nicht geladen werden ({status})."
+    },
+    "irdb_download_failed": {
+      "message": "Fernbedienung '{path}' konnte nicht heruntergeladen werden (HTTP {status})."
+    }
+  }
+}

@@ -1,0 +1,967 @@
+"""Config flow for SHYS Remote."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant import config_entries
+from homeassistant.components import infrared
+from homeassistant.config_entries import ConfigEntry, ConfigSubentryFlow, SubentryFlowResult
+from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import selector
+from homeassistant.util import slugify
+
+from .const import (
+    ATTR_DIRECTION,
+    ATTR_NAME,
+    ATTR_RECEIVER_ENTITY_ID,
+    ATTR_TIMEOUT,
+    ATTR_TRANSMITTER_ENTITY_ID,
+    CONF_DEBOUNCE_MS,
+    CONF_DEVICE_NAME,
+    CONF_IRDB_PATH,
+    CONF_IRDB_QUERY,
+    CONF_IRDB_REMOTE,
+    CONF_IRDB_CATEGORY,
+    CONF_MATCH_TOLERANCE,
+    CONF_PULSE_MS,
+    CONF_SIGNAL_SOURCE,
+    DEFAULT_DEBOUNCE_MS,
+    DEFAULT_LEARN_TIMEOUT,
+    DEFAULT_MATCH_TOLERANCE,
+    DEFAULT_PULSE_MS,
+    DIRECTION_INPUT,
+    DIRECTION_OUTPUT,
+    DOMAIN,
+    IRDB_CATEGORY_ALL,
+    IRDB_FILTER_CATEGORIES,
+    IRDB_FLOW_PAGE_SIZE,
+    IRDB_FLOW_RESULTS_KEY,
+    IRDB_NEXT_PAGE,
+    IRDB_PREV_PAGE,
+    IRDB_SEARCH_AGAIN,
+    SOURCE_IRDB,
+    SOURCE_MANUAL,
+    SUBENTRY_DEVICE,
+    irdb_attribution_placeholders,
+)
+from .irdb import IrdbClient
+from .remote import async_delete_command, async_learn_command
+from .manager import RemoteManager
+
+_LOGGER = logging.getLogger(__name__)
+
+MENU_EDIT_DEVICE = "edit_device"
+MENU_LEARN_COMMAND = "learn_command"
+MENU_DELETE_COMMAND = "delete_command"
+
+CTX_IRDB_PENDING = "irdb_pending_device"
+CTX_IRDB_QUERY = "irdb_last_query"
+CTX_IRDB_CATEGORY = "irdb_last_category"
+CTX_IRDB_PAGE = "irdb_results_page"
+CTX_IRDB_PREVIEW = "irdb_import_preview"
+
+
+def _device_edit_schema() -> vol.Schema:
+    """Return the schema for editing an existing device."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
+            vol.Required(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    filter=[
+                        selector.EntityFilterSelectorConfig(
+                            domain="infrared",
+                            device_class="receiver",
+                        )
+                    ]
+                )
+            ),
+            vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    filter=[
+                        selector.EntityFilterSelectorConfig(
+                            domain="infrared",
+                            device_class="emitter",
+                        )
+                    ]
+                )
+            ),
+        }
+    )
+
+
+def _device_schema() -> vol.Schema:
+    """Return the schema for remote device subentries."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
+            vol.Required(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    filter=[
+                        selector.EntityFilterSelectorConfig(
+                            domain="infrared",
+                            device_class="receiver",
+                        )
+                    ]
+                )
+            ),
+            vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    filter=[
+                        selector.EntityFilterSelectorConfig(
+                            domain="infrared",
+                            device_class="emitter",
+                        )
+                    ]
+                )
+            ),
+            vol.Required(CONF_SIGNAL_SOURCE, default=SOURCE_MANUAL): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[SOURCE_MANUAL, SOURCE_IRDB],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+    )
+
+
+def _learn_schema() -> vol.Schema:
+    """Return the schema for learning a signal."""
+    return vol.Schema(
+        {
+            vol.Required(ATTR_NAME): selector.TextSelector(),
+            vol.Required(ATTR_DIRECTION, default=DIRECTION_OUTPUT): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[DIRECTION_OUTPUT, DIRECTION_INPUT],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(ATTR_TIMEOUT, default=DEFAULT_LEARN_TIMEOUT): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1,
+                    max=120,
+                    unit_of_measurement="s",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+    )
+
+
+def _options_schema() -> vol.Schema:
+    """Return the schema for integration-wide options."""
+    return vol.Schema(
+        {
+            vol.Optional(CONF_PULSE_MS, default=DEFAULT_PULSE_MS): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=100,
+                    max=5000,
+                    unit_of_measurement="ms",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_MATCH_TOLERANCE, default=DEFAULT_MATCH_TOLERANCE
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=1,
+                    max=50,
+                    unit_of_measurement="%",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(CONF_DEBOUNCE_MS, default=DEFAULT_DEBOUNCE_MS): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=5000,
+                    unit_of_measurement="ms",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+    )
+
+
+def _validate_infrared_entities(hass, receiver: str, transmitter: str) -> str | None:
+    """Validate receiver and transmitter entities."""
+    if receiver not in infrared.async_get_receivers(hass):
+        return "invalid_receiver"
+    if transmitter not in infrared.async_get_emitters(hass):
+        return "invalid_emitter"
+    return None
+
+
+def _service_error_key(err: ServiceValidationError) -> str:
+    """Map a service validation error to a config flow error key."""
+    if err.translation_key:
+        return err.translation_key
+    return "learn_failed"
+
+
+def _normalize_entity_id(value: Any) -> str:
+    """Normalize entity selector values from the config flow."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        if not value:
+            return ""
+        first = value[0]
+        return first if isinstance(first, str) else str(first)
+    return str(value) if value is not None else ""
+
+
+def _flow_results_store(hass) -> dict[str, list[dict[str, str]]]:
+    """Return the in-memory IRDB search cache keyed by config flow id."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    store = domain_data.get(IRDB_FLOW_RESULTS_KEY)
+    if not isinstance(store, dict):
+        store = {}
+        domain_data[IRDB_FLOW_RESULTS_KEY] = store
+    return store
+
+
+def _format_entity_hint(hass, entity_id: str) -> str:
+    """Return a human-readable label for a configured entity."""
+    registry = er.async_get(hass)
+    entity_entry = registry.async_get(entity_id)
+    if entity_entry and entity_entry.name:
+        return f"{entity_entry.name} ({entity_id})"
+
+    state = hass.states.get(entity_id)
+    if state is not None and state.name:
+        return f"{state.name} ({entity_id})"
+
+    return entity_id
+
+
+class ShysRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for SHYS Remote."""
+
+    VERSION = 2
+
+    async def async_step_user(self, user_input=None):
+        """Handle the initial step."""
+        if user_input is not None:
+            await self.async_set_unique_id(DOMAIN)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(title="SHYS Remote", data={})
+
+        self._set_confirm_only()
+        return self.async_show_form(step_id="user")
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentries supported by this integration."""
+        return {SUBENTRY_DEVICE: DeviceSubentryFlowHandler}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Return the options flow handler."""
+        return ShysRemoteOptionsFlowHandler(config_entry)
+
+
+class ShysRemoteOptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle integration-wide options."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self._entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Manage integration options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self._entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                _options_schema(),
+                {
+                    CONF_PULSE_MS: options.get(CONF_PULSE_MS, DEFAULT_PULSE_MS),
+                    CONF_MATCH_TOLERANCE: options.get(
+                        CONF_MATCH_TOLERANCE, DEFAULT_MATCH_TOLERANCE
+                    ),
+                    CONF_DEBOUNCE_MS: options.get(CONF_DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS),
+                },
+            ),
+        )
+
+
+class DeviceSubentryFlowHandler(ConfigSubentryFlow):
+    """Handle subentry flow for remote devices."""
+
+    def _get_pending_device(self) -> dict[str, Any] | None:
+        """Return pending device data stored in the flow context."""
+        pending = self.context.get(CTX_IRDB_PENDING)
+        return pending if isinstance(pending, dict) else None
+
+    def _set_pending_device(self, user_input: dict[str, Any]) -> None:
+        """Store pending device data in the flow context."""
+        self.context[CTX_IRDB_PENDING] = {
+            CONF_DEVICE_NAME: user_input[CONF_DEVICE_NAME],
+            ATTR_RECEIVER_ENTITY_ID: _normalize_entity_id(
+                user_input[ATTR_RECEIVER_ENTITY_ID]
+            ),
+            ATTR_TRANSMITTER_ENTITY_ID: _normalize_entity_id(
+                user_input[ATTR_TRANSMITTER_ENTITY_ID]
+            ),
+            CONF_SIGNAL_SOURCE: user_input.get(CONF_SIGNAL_SOURCE, SOURCE_IRDB),
+        }
+
+    def _set_flow_search_results(self, results: list[dict[str, str]]) -> None:
+        """Cache IRDB search results outside the serialized flow context."""
+        _flow_results_store(self.hass)[self.flow_id] = [
+            {"path": entry["path"], "label": entry["label"]}
+            for entry in results
+            if isinstance(entry.get("path"), str) and isinstance(entry.get("label"), str)
+        ]
+        self.context[CTX_IRDB_PAGE] = 0
+
+    def _get_flow_search_results(self) -> list[dict[str, str]]:
+        """Return cached IRDB search results for this flow."""
+        results = _flow_results_store(self.hass).get(self.flow_id)
+        return results if isinstance(results, list) else []
+
+    def _clear_flow_search_results(self) -> None:
+        """Drop cached IRDB search results for this flow."""
+        _flow_results_store(self.hass).pop(self.flow_id, None)
+        self.context.pop(CTX_IRDB_PAGE, None)
+
+    def _get_results_page(self) -> int:
+        """Return the current zero-based results page."""
+        page = self.context.get(CTX_IRDB_PAGE, 0)
+        if isinstance(page, int) and page >= 0:
+            return page
+        return 0
+
+    def _set_results_page(self, page: int) -> None:
+        """Store the current results page."""
+        self.context[CTX_IRDB_PAGE] = max(0, page)
+
+    async def _async_resolve_search_results(self) -> list[dict[str, str]]:
+        """Return cached search results or rebuild them from the last query."""
+        cached = self._get_flow_search_results()
+        if cached:
+            return cached
+
+        query = self._get_last_query()
+        if len(query) < 2:
+            return []
+
+        category = self._get_last_category()
+        device_type = None if category == IRDB_CATEGORY_ALL else category
+        results = await self._get_irdb_client().async_search(
+            query, device_type=device_type
+        )
+        if results:
+            self._set_flow_search_results(results)
+        return results
+
+    def _irdb_pick_description_placeholders(
+        self, results: list[dict[str, str]]
+    ) -> dict[str, str]:
+        """Return placeholders for the remote pick step."""
+        page = self._get_results_page()
+        total_pages = max(
+            1, (len(results) + IRDB_FLOW_PAGE_SIZE - 1) // IRDB_FLOW_PAGE_SIZE
+        )
+        return {
+            "count": str(len(results)),
+            "query": self._get_last_query(),
+            "page": str(page + 1),
+            "pages": str(total_pages),
+        }
+
+    def _get_last_query(self) -> str:
+        """Return the last IRDB search query."""
+        query = self.context.get(CTX_IRDB_QUERY)
+        return query if isinstance(query, str) else ""
+
+    def _set_last_query(self, query: str) -> None:
+        """Store the last IRDB search query in the flow context."""
+        self.context[CTX_IRDB_QUERY] = query
+
+    def _is_german(self) -> bool:
+        """Return whether the UI language is German."""
+        return self.hass.config.language.lower().startswith("de")
+
+    def _irdb_category_label(self, category: str) -> str:
+        """Return a human-readable label for an IRDB category value."""
+        if category == IRDB_CATEGORY_ALL:
+            return "Alle Kategorien" if self._is_german() else "All categories"
+        return category.replace("_", " ")
+
+    def _irdb_category_options(self) -> list[dict[str, str]]:
+        """Return select options for IRDB category filter."""
+        return [
+            {"value": category, "label": self._irdb_category_label(category)}
+            for category in IRDB_FILTER_CATEGORIES
+        ]
+
+    def _get_last_category(self) -> str:
+        """Return the last IRDB category filter."""
+        category = self.context.get(CTX_IRDB_CATEGORY)
+        if not isinstance(category, str):
+            return IRDB_CATEGORY_ALL
+        if category == "__all__":
+            return IRDB_CATEGORY_ALL
+        return category
+
+    def _set_last_category(self, category: str) -> None:
+        """Store the last IRDB category filter in the flow context."""
+        self.context[CTX_IRDB_CATEGORY] = category
+
+    def _get_import_preview(self) -> dict[str, Any] | None:
+        """Return IRDB import preview stored in the flow context."""
+        preview = self.context.get(CTX_IRDB_PREVIEW)
+        return preview if isinstance(preview, dict) else None
+
+    def _set_import_preview(self, preview: dict[str, Any]) -> None:
+        """Store IRDB import preview in the flow context."""
+        self.context[CTX_IRDB_PREVIEW] = {
+            "path": preview["path"],
+            "label": preview["label"],
+            "signal_count": preview["signal_count"],
+            "skipped_count": preview["skipped_count"],
+        }
+
+    def _irdb_search_schema(self) -> vol.Schema:
+        """Return the schema for IRDB search."""
+        return vol.Schema(
+            {
+                vol.Required(CONF_IRDB_QUERY): selector.TextSelector(),
+                vol.Optional(
+                    CONF_IRDB_CATEGORY, default=IRDB_CATEGORY_ALL
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=self._irdb_category_options(),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+            }
+        )
+
+    def _irdb_remote_options(
+        self, results: list[dict[str, str]], page: int
+    ) -> list[dict[str, str]]:
+        """Return select options for one page of IRDB remotes."""
+        start = page * IRDB_FLOW_PAGE_SIZE
+        end = start + IRDB_FLOW_PAGE_SIZE
+        page_results = results[start:end]
+
+        if self._is_german():
+            new_search_label = "↩ Neue Suche"
+            prev_page_label = "← Vorherige Seite"
+            next_page_label = "Nächste Seite →"
+        else:
+            new_search_label = "↩ New search"
+            prev_page_label = "← Previous page"
+            next_page_label = "Next page →"
+
+        options: list[dict[str, str]] = []
+        if page > 0:
+            options.append({"value": IRDB_PREV_PAGE, "label": prev_page_label})
+        options.append({"value": IRDB_SEARCH_AGAIN, "label": new_search_label})
+        if end < len(results):
+            options.append({"value": IRDB_NEXT_PAGE, "label": next_page_label})
+        options.extend(
+            {"value": entry["path"], "label": entry["label"]}
+            for entry in page_results
+        )
+        return options
+
+    def _get_manager(self) -> RemoteManager:
+        """Return the integration manager for the parent config entry."""
+        manager = self.hass.data.get(DOMAIN, {}).get(self._get_entry().entry_id)
+        if not isinstance(manager, RemoteManager):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="not_loaded",
+            )
+        return manager
+
+    def _get_irdb_client(self) -> IrdbClient:
+        """Return the IR database client."""
+        return IrdbClient(self.hass, self._get_entry())
+
+    def _create_device_entry(
+        self,
+        device_name: str,
+        receiver: str,
+        transmitter: str,
+        *,
+        irdb_path: str | None = None,
+    ) -> SubentryFlowResult:
+        """Create a device subentry."""
+        data: dict[str, str] = {
+            ATTR_RECEIVER_ENTITY_ID: receiver,
+            ATTR_TRANSMITTER_ENTITY_ID: transmitter,
+        }
+        if irdb_path:
+            data[CONF_IRDB_PATH] = irdb_path
+
+        return self.async_create_entry(
+            title=device_name,
+            data=data,
+            unique_id=slugify(device_name),
+        )
+
+    def _try_create_irdb_device(
+        self,
+        pending_device: dict[str, Any],
+        irdb_path: str,
+    ) -> tuple[SubentryFlowResult | None, dict[str, str]]:
+        """Validate pending device data and create a subentry for IRDB import."""
+        errors: dict[str, str] = {}
+        device_name = str(pending_device.get(CONF_DEVICE_NAME, "")).strip()
+        receiver = _normalize_entity_id(pending_device.get(ATTR_RECEIVER_ENTITY_ID))
+        transmitter = _normalize_entity_id(
+            pending_device.get(ATTR_TRANSMITTER_ENTITY_ID)
+        )
+
+        if not device_name or not slugify(device_name):
+            errors["base"] = "invalid_device_name"
+        elif (error := _validate_infrared_entities(self.hass, receiver, transmitter)):
+            errors["base"] = error
+        else:
+            unique_id = slugify(device_name)
+            config_entry = self._get_entry()
+            for existing in config_entry.subentries.values():
+                if existing.unique_id == unique_id:
+                    errors["base"] = "device_already_exists"
+                    break
+            else:
+                self._clear_flow_search_results()
+                self.context.pop(CTX_IRDB_PENDING, None)
+                self.context.pop(CTX_IRDB_PREVIEW, None)
+                try:
+                    return (
+                        self._create_device_entry(
+                            device_name,
+                            receiver,
+                            transmitter,
+                            irdb_path=irdb_path,
+                        ),
+                        errors,
+                    )
+                except Exception:
+                    _LOGGER.exception("Failed to create IRDB device subentry")
+                    errors["base"] = "irdb_import_failed"
+
+        return None, errors
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add a new remote device."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            device_name = user_input[CONF_DEVICE_NAME].strip()
+            receiver = _normalize_entity_id(user_input[ATTR_RECEIVER_ENTITY_ID])
+            transmitter = _normalize_entity_id(user_input[ATTR_TRANSMITTER_ENTITY_ID])
+            signal_source = user_input.get(CONF_SIGNAL_SOURCE, SOURCE_MANUAL)
+
+            if not device_name:
+                errors["base"] = "invalid_device_name"
+            elif (error := _validate_infrared_entities(self.hass, receiver, transmitter)):
+                errors["base"] = error
+            else:
+                unique_id = slugify(device_name)
+                config_entry = self._get_entry()
+                for existing in config_entry.subentries.values():
+                    if existing.unique_id == unique_id:
+                        errors["base"] = "device_already_exists"
+                        break
+                else:
+                    if signal_source == SOURCE_IRDB:
+                        self._set_pending_device(user_input)
+                        return await self.async_step_irdb_search()
+                    return self._create_device_entry(device_name, receiver, transmitter)
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_device_schema(),
+            errors=errors,
+        )
+
+    async def async_step_irdb_search(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Search the Flipper-IRDB for a remote."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            query = user_input.get(CONF_IRDB_QUERY, "").strip()
+            category = user_input.get(CONF_IRDB_CATEGORY, IRDB_CATEGORY_ALL)
+            if category == "__all__":
+                category = IRDB_CATEGORY_ALL
+            if len(query) < 2:
+                errors["base"] = "irdb_query_too_short"
+            else:
+                try:
+                    device_type = (
+                        None
+                        if category == IRDB_CATEGORY_ALL
+                        else category
+                    )
+                    results = await self._get_irdb_client().async_search(
+                        query, device_type=device_type
+                    )
+                except HomeAssistantError:
+                    errors["base"] = "irdb_index_failed"
+                except Exception:
+                    _LOGGER.exception("IRDB search failed")
+                    errors["base"] = "irdb_index_failed"
+                else:
+                    if not results:
+                        errors["base"] = "irdb_no_results"
+                    else:
+                        self._set_last_query(query)
+                        self._set_last_category(category)
+                        self._set_flow_search_results(results)
+                        return await self.async_step_irdb_pick_remote()
+
+        return self.async_show_form(
+            step_id="irdb_search",
+            data_schema=self.add_suggested_values_to_schema(
+                self._irdb_search_schema(),
+                {
+                    CONF_IRDB_QUERY: self._get_last_query(),
+                    CONF_IRDB_CATEGORY: self._get_last_category(),
+                },
+            ),
+            description_placeholders=irdb_attribution_placeholders(),
+            errors=errors,
+        )
+
+    async def async_step_irdb_pick_remote(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Select a remote from the search results."""
+        errors: dict[str, str] = {}
+
+        if not self._get_pending_device():
+            return await self.async_step_user()
+
+        try:
+            search_results = await self._async_resolve_search_results()
+        except HomeAssistantError:
+            errors["base"] = "irdb_index_failed"
+            search_results = []
+        except Exception:
+            _LOGGER.exception("IRDB search failed while loading pick step")
+            errors["base"] = "irdb_index_failed"
+            search_results = []
+
+        if not search_results:
+            if not errors:
+                errors["base"] = "irdb_no_results"
+            return await self.async_step_irdb_search()
+
+        page = self._get_results_page()
+        max_page = max(
+            0, (len(search_results) - 1) // IRDB_FLOW_PAGE_SIZE
+        )
+        if page > max_page:
+            page = max_page
+            self._set_results_page(page)
+
+        if user_input is not None:
+            selected_path = user_input.get(CONF_IRDB_REMOTE)
+            if selected_path == IRDB_SEARCH_AGAIN:
+                self._clear_flow_search_results()
+                return await self.async_step_irdb_search()
+            if selected_path == IRDB_NEXT_PAGE:
+                self._set_results_page(min(page + 1, max_page))
+                return await self.async_step_irdb_pick_remote()
+            if selected_path == IRDB_PREV_PAGE:
+                self._set_results_page(max(page - 1, 0))
+                return await self.async_step_irdb_pick_remote()
+
+            selected_entry = next(
+                (
+                    entry
+                    for entry in search_results
+                    if entry["path"] == selected_path
+                ),
+                None,
+            )
+            if selected_entry is None:
+                errors["base"] = "irdb_remote_not_found"
+            else:
+                try:
+                    preview = await self._get_irdb_client().async_preview_remote(
+                        selected_path
+                    )
+                except HomeAssistantError:
+                    errors["base"] = "irdb_download_failed"
+                except Exception:
+                    _LOGGER.exception("IRDB preview failed for %s", selected_path)
+                    errors["base"] = "irdb_download_failed"
+                else:
+                    if preview["signal_count"] == 0:
+                        errors["base"] = "irdb_no_supported_signals"
+                    else:
+                        pending_device = self._get_pending_device()
+                        if pending_device is None:
+                            return await self.async_step_user()
+                        result, create_errors = self._try_create_irdb_device(
+                            pending_device, selected_path
+                        )
+                        if result:
+                            self._clear_flow_search_results()
+                            return result
+                        errors.update(create_errors)
+
+        return self.async_show_form(
+            step_id="irdb_pick_remote",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_IRDB_REMOTE): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=self._irdb_remote_options(search_results, page),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+            description_placeholders=self._irdb_pick_description_placeholders(
+                search_results
+            ),
+            errors=errors,
+        )
+
+    async def async_step_irdb_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Confirm importing a remote from the database."""
+        pending_device = self._get_pending_device()
+        import_preview = self._get_import_preview()
+
+        if not pending_device or not import_preview:
+            return await self.async_step_user()
+
+        if user_input is not None:
+            errors: dict[str, str] = {}
+            try:
+                preview = await self._get_irdb_client().async_preview_remote(
+                    import_preview["path"]
+                )
+            except HomeAssistantError:
+                errors["base"] = "irdb_download_failed"
+            except Exception:
+                _LOGGER.exception(
+                    "IRDB preview failed for %s", import_preview["path"]
+                )
+                errors["base"] = "irdb_download_failed"
+            else:
+                result, create_errors = self._try_create_irdb_device(
+                    pending_device, import_preview["path"]
+                )
+                if result:
+                    self._clear_flow_search_results()
+                    return result
+                errors.update(create_errors)
+
+            self._set_confirm_only()
+            return self.async_show_form(
+                step_id="irdb_confirm",
+                description_placeholders={
+                    **irdb_attribution_placeholders(),
+                    "remote": import_preview["label"],
+                    "count": str(import_preview["signal_count"]),
+                    "skipped": str(import_preview["skipped_count"]),
+                },
+                errors=errors,
+            )
+
+        self._set_confirm_only()
+        return self.async_show_form(
+            step_id="irdb_confirm",
+            description_placeholders={
+                **irdb_attribution_placeholders(),
+                "remote": import_preview["label"],
+                "count": str(import_preview["signal_count"]),
+                "skipped": str(import_preview["skipped_count"]),
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show the device admin menu."""
+        subentry = self._get_reconfigure_subentry()
+        return self.async_show_menu(
+            step_id="reconfigure",
+            menu_options=[
+                MENU_EDIT_DEVICE,
+                MENU_LEARN_COMMAND,
+                MENU_DELETE_COMMAND,
+            ],
+            description_placeholders={"device": subentry.title},
+        )
+
+    async def async_step_edit_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Edit device name or infrared hardware."""
+        errors: dict[str, str] = {}
+        subentry = self._get_reconfigure_subentry()
+
+        if user_input is not None:
+            device_name = user_input[CONF_DEVICE_NAME].strip()
+            receiver = _normalize_entity_id(user_input[ATTR_RECEIVER_ENTITY_ID])
+            transmitter = _normalize_entity_id(
+                user_input[ATTR_TRANSMITTER_ENTITY_ID]
+            )
+
+            if not device_name:
+                errors["base"] = "invalid_device_name"
+            elif (error := _validate_infrared_entities(self.hass, receiver, transmitter)):
+                errors["base"] = error
+            else:
+                unique_id = slugify(device_name)
+                config_entry = self._get_entry()
+                for existing in config_entry.subentries.values():
+                    if (
+                        existing.subentry_id != subentry.subentry_id
+                        and existing.unique_id == unique_id
+                    ):
+                        errors["base"] = "device_already_exists"
+                        break
+                else:
+                    return self.async_update_and_abort(
+                        config_entry,
+                        subentry,
+                        title=device_name,
+                        data={
+                            ATTR_RECEIVER_ENTITY_ID: receiver,
+                            ATTR_TRANSMITTER_ENTITY_ID: transmitter,
+                        },
+                    )
+
+        return self.async_show_form(
+            step_id="edit_device",
+            data_schema=self.add_suggested_values_to_schema(
+                _device_edit_schema(),
+                {
+                    CONF_DEVICE_NAME: subentry.title,
+                    ATTR_RECEIVER_ENTITY_ID: subentry.data[ATTR_RECEIVER_ENTITY_ID],
+                    ATTR_TRANSMITTER_ENTITY_ID: subentry.data[
+                        ATTR_TRANSMITTER_ENTITY_ID
+                    ],
+                },
+            ),
+            description_placeholders={"device": subentry.title},
+            errors=errors,
+        )
+
+    async def async_step_learn_command(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Learn a new remote signal."""
+        errors: dict[str, str] = {}
+        subentry = self._get_reconfigure_subentry()
+
+        if user_input is not None:
+            signal_name = slugify(user_input[ATTR_NAME].strip())
+            timeout = int(user_input.get(ATTR_TIMEOUT, DEFAULT_LEARN_TIMEOUT))
+            direction = user_input.get(ATTR_DIRECTION, DIRECTION_OUTPUT)
+
+            if not signal_name:
+                errors["base"] = "invalid_signal_name"
+            else:
+                try:
+                    manager = self._get_manager()
+                except ServiceValidationError as err:
+                    errors["base"] = _service_error_key(err)
+                else:
+                    try:
+                        await async_learn_command(
+                            self.hass,
+                            manager,
+                            subentry,
+                            signal_name,
+                            timeout=timeout,
+                            direction=direction,
+                        )
+                    except ServiceValidationError as err:
+                        _LOGGER.debug("Learn failed: %s", err)
+                        errors["base"] = _service_error_key(err)
+                    else:
+                        return self.async_abort(
+                            reason="signal_learned",
+                            description_placeholders={
+                                "name": signal_name,
+                                "device": subentry.title,
+                            },
+                        )
+
+        return self.async_show_form(
+            step_id="learn_command",
+            data_schema=_learn_schema(),
+            description_placeholders={
+                "device": subentry.title,
+                "receiver": _format_entity_hint(
+                    self.hass, subentry.data[ATTR_RECEIVER_ENTITY_ID]
+                ),
+            },
+            errors=errors,
+        )
+
+    async def async_step_delete_command(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Delete a learned remote signal."""
+        subentry = self._get_reconfigure_subentry()
+        manager = self._get_manager()
+        signals = list(manager.get_subentry_commands(subentry.subentry_id).keys())
+
+        if not signals:
+            self._set_confirm_only()
+            return self.async_show_form(
+                step_id="delete_command_empty",
+                description_placeholders={"device": subentry.title},
+            )
+
+        if user_input is not None:
+            signal_name = user_input[ATTR_NAME]
+            await async_delete_command(manager, subentry, signal_name)
+            return self.async_abort(
+                reason="signal_deleted",
+                description_placeholders={
+                    "name": signal_name,
+                    "device": subentry.title,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="delete_command",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(ATTR_NAME): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=signals,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+            description_placeholders={"device": subentry.title},
+        )

@@ -1,0 +1,190 @@
+"""Parse Flipper Zero .ir files and convert signals for storage."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from homeassistant.util import slugify
+
+from .const import (
+    ATTR_DIRECTION,
+    COMMAND_TYPE_RAW,
+    DEFAULT_CARRIER_FREQUENCY,
+    DIRECTION_OUTPUT,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def parse_flipper_ir(content: str) -> list[dict[str, Any]]:
+    """Parse a Flipper .ir file into signal blocks."""
+    signals: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Filetype:") or line.startswith("Version:"):
+            continue
+        if line == "#":
+            if current.get("name"):
+                signals.append(current)
+            current = {}
+            continue
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        current[key.strip().lower()] = value.strip()
+
+    if current.get("name"):
+        signals.append(current)
+
+    return signals
+
+
+def _parse_hex_bytes(value: str) -> list[int]:
+    """Parse Flipper hex byte fields."""
+    return [int(part, 16) for part in value.split()]
+
+
+def _first_hex_byte(value: str) -> int:
+    """Return the first byte of a Flipper hex field."""
+    parts = _parse_hex_bytes(value)
+    return parts[0] if parts else 0
+
+
+def _address_from_flipper(value: str) -> int:
+    """Convert a Flipper address field to an integer."""
+    parts = _parse_hex_bytes(value)
+    if len(parts) >= 2:
+        return parts[0] | (parts[1] << 8)
+    return parts[0] if parts else 0
+
+
+def _build_parsed_command(
+    protocol: str, address: int, command: int, frequency: int
+) -> Any | None:
+    """Build an infrared-protocols command for a Flipper parsed signal."""
+    protocol_key = protocol.strip().lower()
+
+    try:
+        if protocol_key in {"samsung32", "samsung"}:
+            from infrared_protocols.commands.samsung import Samsung32Command
+
+            return Samsung32Command(
+                address=address, command=command, modulation=frequency
+            )
+
+        if protocol_key in {"nec", "necext"}:
+            from infrared_protocols.commands.nec import NECCommand
+
+            return NECCommand(address=address, command=command, modulation=frequency)
+
+        if protocol_key in {"rc5", "rc5x", "rc6"}:
+            from infrared_protocols.commands.rc5 import RC5Command
+
+            return RC5Command(
+                address=address & 0x1F,
+                command=command & 0x7F,
+                modulation=frequency or 36000,
+            )
+
+        if protocol_key.startswith("sony"):
+            from infrared_protocols.commands.sony import SonyCommand
+
+            address_bits = 8
+            if protocol_key.endswith("12"):
+                address_bits = 5
+            elif protocol_key.endswith("15"):
+                address_bits = 8
+            elif protocol_key.endswith("20"):
+                address_bits = 13
+            return SonyCommand(
+                address=address,
+                address_bits=address_bits,
+                command=command & 0x7F,
+                modulation=frequency or 40000,
+            )
+
+        if protocol_key == "sharp":
+            from infrared_protocols.commands.sharp import SharpCommand
+
+            return SharpCommand(
+                address=address & 0x1F,
+                command=command & 0xFF,
+                modulation=frequency,
+            )
+    except (ImportError, ValueError, TypeError) as err:
+        _LOGGER.debug(
+            "Could not build parsed command for protocol %s: %s", protocol, err
+        )
+        return None
+
+    return None
+
+
+def signal_to_command_data(signal: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a parsed Flipper signal into stored command data."""
+    signal_type = signal.get("type", "").lower()
+    frequency = int(signal.get("frequency", DEFAULT_CARRIER_FREQUENCY))
+
+    if signal_type == "raw":
+        raw_values = signal.get("data", "")
+        if not raw_values:
+            return None
+        timings = [int(value) for value in raw_values.split()]
+        if not timings:
+            return None
+        return {
+            "type": COMMAND_TYPE_RAW,
+            ATTR_DIRECTION: DIRECTION_OUTPUT,
+            "carrier_frequency": frequency,
+            "command": timings,
+        }
+
+    if signal_type in {"parsed", "parsed_array"}:
+        protocol = signal.get("protocol")
+        if not protocol:
+            return None
+        address = _address_from_flipper(signal.get("address", "00"))
+        command = _first_hex_byte(signal.get("command", "00"))
+        parsed_command = _build_parsed_command(protocol, address, command, frequency)
+        if parsed_command is None:
+            return None
+        return {
+            "type": COMMAND_TYPE_RAW,
+            ATTR_DIRECTION: DIRECTION_OUTPUT,
+            "carrier_frequency": parsed_command.modulation,
+            "command": parsed_command.get_raw_timings(),
+        }
+
+    return None
+
+
+def signals_to_command_map(signals: list[dict[str, Any]]) -> tuple[dict[str, dict], int]:
+    """Convert Flipper signals to a slugged command map and skipped count."""
+    commands: dict[str, dict[str, Any]] = {}
+    skipped = 0
+    used_names: set[str] = set()
+
+    for signal in signals:
+        command_data = signal_to_command_data(signal)
+        if command_data is None:
+            skipped += 1
+            continue
+
+        base_name = slugify(signal.get("name", ""))
+        if not base_name:
+            skipped += 1
+            continue
+
+        signal_name = base_name
+        suffix = 2
+        while signal_name in used_names:
+            signal_name = f"{base_name}_{suffix}"
+            suffix += 1
+
+        used_names.add(signal_name)
+        commands[signal_name] = command_data
+
+    return commands, skipped

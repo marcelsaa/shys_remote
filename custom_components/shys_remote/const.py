@@ -1,0 +1,110 @@
+"""Constants for the SHYS Remote integration."""
+
+DOMAIN = "shys_remote"
+LEGACY_DOMAIN = "shys_ir_remote"
+LEGACY_IRDB_INDEX_STORE_KEY = f"{LEGACY_DOMAIN}_irdb_index_v2"
+
+PLATFORMS = ["binary_sensor", "button"]
+SUBENTRY_DEVICE = "device"
+IRDB_FLOW_RESULTS_KEY = "irdb_flow_results"
+IRDB_FLOW_PAGE_SIZE = 100
+
+STORAGE_VERSION = 2
+CONFIG_VERSION = 2
+
+DEFAULT_CARRIER_FREQUENCY = 38000
+DEFAULT_LEARN_TIMEOUT = 10
+DEFAULT_PULSE_MS = 500
+DEFAULT_MATCH_TOLERANCE = 25
+DEFAULT_DEBOUNCE_MS = 300
+
+DIRECTION_OUTPUT = "output"
+DIRECTION_INPUT = "input"
+
+SERVICE_LEARN = "learn"
+SERVICE_SEND = "send"
+SERVICE_DELETE = "delete"
+
+ATTR_DEVICE = "device"
+ATTR_DIRECTION = "direction"
+ATTR_NAME = "name"
+ATTR_RECEIVER_ENTITY_ID = "receiver_entity_id"
+ATTR_TRANSMITTER_ENTITY_ID = "transmitter_entity_id"
+ATTR_TIMEOUT = "timeout"
+
+CONF_DEBOUNCE_MS = "debounce_ms"
+CONF_DEVICE_NAME = "device_name"
+CONF_MATCH_TOLERANCE = "match_tolerance"
+CONF_PULSE_MS = "pulse_ms"
+
+COMMAND_TYPE_RAW = "raw"
+COMMAND_TYPE_PARSED = "parsed"
+LEGACY_SUBENTRY_UNIQUE_ID = "imported"
+
+SOURCE_MANUAL = "manual"
+SOURCE_IRDB = "irdb"
+
+CONF_IRDB_PATH = "irdb_path"
+CONF_IRDB_QUERY = "irdb_query"
+CONF_IRDB_REMOTE = "irdb_remote"
+CONF_IRDB_CATEGORY = "irdb_category"
+CONF_SIGNAL_SOURCE = "signal_source"
+
+IRDB_CATEGORY_ALL = "all"
+IRDB_SEARCH_AGAIN = "__new_search__"
+IRDB_NEXT_PAGE = "__next_page__"
+IRDB_PREV_PAGE = "__prev_page__"
+
+IRDB_FILTER_CATEGORIES = (
+    IRDB_CATEGORY_ALL,
+    "TVs",
+    "Audio",
+    "ACs",
+    "Fans",
+    "LEDs",
+    "DVD_Players",
+    "Projectors",
+    "Cameras",
+    "Miscellaneous",
+)
+
+IRDB_REPO_ATTRIBUTION = "Flipper-IRDB (Lucaslhm)"
+IRDB_REPO_URL = "https://github.com/Lucaslhm/Flipper-IRDB"
+IRDB_LICENSE_NAME = "CC0 1.0"
+IRDB_LICENSE_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
+
+
+def irdb_attribution_placeholders() -> dict[str, str]:
+    """Return translation placeholders for Flipper-IRDB attribution."""
+    return {
+        "attribution": IRDB_REPO_ATTRIBUTION,
+        "license": IRDB_LICENSE_NAME,
+        "source_url": IRDB_REPO_URL,
+        "license_url": IRDB_LICENSE_URL,
+    }
+
+
+def get_signal_direction(command_data: dict) -> str:
+    """Return the direction of a stored signal, defaulting to output."""
+    return command_data.get(ATTR_DIRECTION, DIRECTION_OUTPUT)
+
+
+def get_integration_options(entry) -> dict[str, int | float]:
+    """Return integration-wide options with defaults."""
+    return {
+        CONF_PULSE_MS: int(entry.options.get(CONF_PULSE_MS, DEFAULT_PULSE_MS)),
+        CONF_MATCH_TOLERANCE: float(
+            entry.options.get(CONF_MATCH_TOLERANCE, DEFAULT_MATCH_TOLERANCE)
+        ),
+        CONF_DEBOUNCE_MS: int(entry.options.get(CONF_DEBOUNCE_MS, DEFAULT_DEBOUNCE_MS)),
+    }
+
+
+def output_signal_unique_id(subentry_unique_id: str, signal_name: str) -> str:
+    """Return the unique id for an output signal button."""
+    return f"{subentry_unique_id}_{signal_name}"
+
+
+def input_signal_unique_id(subentry_unique_id: str, signal_name: str) -> str:
+    """Return the unique id for an input signal binary sensor."""
+    return f"{subentry_unique_id}_{signal_name}_input"

@@ -1,0 +1,94 @@
+learn:
+  name: Learn signal
+  description: Waits for the next remote signal and stores it on the selected device.
+  fields:
+    device:
+      name: Device
+      description: Device slug (shown in the subentry settings), e.g. ventilator.
+      required: true
+      example: ventilator
+      selector:
+        text:
+    name:
+      name: Signal name
+      description: Unique signal name within the device.
+      required: true
+      example: power
+      selector:
+        text:
+    direction:
+      name: Direction
+      description: Output signals can be sent later, input signals trigger a binary sensor.
+      required: false
+      default: output
+      selector:
+        select:
+          options:
+            - output
+            - input
+    receiver_entity_id:
+      name: Receiver
+      description: Optional override for the device's default infrared receiver.
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: infrared
+              device_class: receiver
+    transmitter_entity_id:
+      name: Transmitter
+      description: Optional override for the device's default infrared transmitter.
+      required: false
+      selector:
+        entity:
+          filter:
+            - domain: infrared
+              device_class: emitter
+    timeout:
+      name: Timeout
+      description: Maximum time to wait for a signal.
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: s
+
+send:
+  name: Send signal
+  description: Sends a previously learned output signal.
+  fields:
+    device:
+      name: Device
+      description: Device slug, e.g. ventilator.
+      required: true
+      example: ventilator
+      selector:
+        text:
+    name:
+      name: Signal name
+      description: Name of the learned output signal.
+      required: true
+      example: power
+      selector:
+        text:
+
+delete:
+  name: Delete signal
+  description: Deletes a learned signal and removes its entity.
+  fields:
+    device:
+      name: Device
+      description: Device slug, e.g. ventilator.
+      required: true
+      example: ventilator
+      selector:
+        text:
+    name:
+      name: Signal name
+      description: Name of the learned signal.
+      required: true
+      example: power
+      selector:
+        text:
