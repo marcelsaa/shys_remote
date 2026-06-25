@@ -18,7 +18,7 @@ learn:
         text:
     direction:
       name: Direction
-      description: Output signals can be sent later, input signals trigger a binary sensor.
+      description: Output signals can be sent later, input signals trigger a binary sensor. Both creates a button and binary sensor.
       required: false
       default: output
       selector:
@@ -26,6 +26,7 @@ learn:
           options:
             - output
             - input
+            - both
     receiver_entity_id:
       name: Receiver
       description: Optional override for the device's default infrared receiver.

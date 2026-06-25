@@ -23,6 +23,7 @@ from .const import (
     CONF_DEBOUNCE_MS,
     CONF_MATCH_TOLERANCE,
     DEFAULT_CARRIER_FREQUENCY,
+    DIRECTION_BOTH,
     DIRECTION_INPUT,
     DIRECTION_OUTPUT,
     DOMAIN,
@@ -126,12 +127,14 @@ class RemoteManager:
     @staticmethod
     def is_input_signal(command_data: dict[str, Any]) -> bool:
         """Return whether a stored signal is configured for input."""
-        return get_signal_direction(command_data) == DIRECTION_INPUT
+        direction = get_signal_direction(command_data)
+        return direction in (DIRECTION_INPUT, DIRECTION_BOTH)
 
     @staticmethod
     def is_output_signal(command_data: dict[str, Any]) -> bool:
         """Return whether a stored signal is configured for output."""
-        return get_signal_direction(command_data) == DIRECTION_OUTPUT
+        direction = get_signal_direction(command_data)
+        return direction in (DIRECTION_OUTPUT, DIRECTION_BOTH)
 
     def set_add_button_entities_callback(
         self, add_entities: AddEntitiesCallback
@@ -226,36 +229,44 @@ class RemoteManager:
         subentry: ConfigSubentry,
         signal_name: str,
         command_data: dict[str, Any],
-    ) -> ShysRemoteButton | ShysRemoteInputSensor:
+    ) -> ShysRemoteButton | ShysRemoteInputSensor | None:
         """Store a signal and expose the matching entity."""
         subentry_commands = self.get_subentry_commands(subentry.subentry_id)
         subentry_commands[signal_name] = command_data
         await self.async_save()
 
+        primary_entity: ShysRemoteButton | ShysRemoteInputSensor | None = None
+
+        if self.is_output_signal(command_data):
+            button_entity = self.create_button_entity(subentry, signal_name)
+            if self._add_button_entities is None:
+                self._pending_buttons.append((button_entity, subentry.subentry_id))
+            else:
+                self._add_button_entities(
+                    [button_entity], config_subentry_id=subentry.subentry_id
+                )
+            primary_entity = button_entity
+
         if self.is_input_signal(command_data):
-            entity = self.create_input_sensor_entity(subentry, signal_name)
+            sensor_entity = self.create_input_sensor_entity(subentry, signal_name)
             if self._add_sensor_entities is None:
-                self._pending_sensors.append((entity, subentry.subentry_id))
+                self._pending_sensors.append((sensor_entity, subentry.subentry_id))
             else:
                 self._add_sensor_entities(
-                    [entity], config_subentry_id=subentry.subentry_id
+                    [sensor_entity], config_subentry_id=subentry.subentry_id
                 )
             await self.async_refresh_receivers()
-            return entity
+            if primary_entity is None:
+                primary_entity = sensor_entity
 
-        entity = self.create_button_entity(subentry, signal_name)
-        if self._add_button_entities is None:
-            self._pending_buttons.append((entity, subentry.subentry_id))
-        else:
-            self._add_button_entities([entity], config_subentry_id=subentry.subentry_id)
-        return entity
+        return primary_entity
 
     async def async_import_commands_bulk(
         self,
         subentry: ConfigSubentry,
         commands: dict[str, dict[str, Any]],
     ) -> int:
-        """Store multiple output signals and expose them as buttons."""
+        """Store multiple signals and expose matching entities."""
         if not commands:
             return 0
 
@@ -263,17 +274,36 @@ class RemoteManager:
         subentry_commands.update(commands)
         await self.async_save()
 
-        entities = [
+        button_entities = [
             self.create_button_entity(subentry, signal_name)
-            for signal_name in commands
+            for signal_name, command_data in commands.items()
+            if self.is_output_signal(command_data)
         ]
+        sensor_entities = [
+            self.create_input_sensor_entity(subentry, signal_name)
+            for signal_name, command_data in commands.items()
+            if self.is_input_signal(command_data)
+        ]
+
         if self._add_button_entities is None:
-            for entity in entities:
+            for entity in button_entities:
                 self._pending_buttons.append((entity, subentry.subentry_id))
-        else:
+        elif button_entities:
             self._add_button_entities(
-                entities, config_subentry_id=subentry.subentry_id
+                button_entities, config_subentry_id=subentry.subentry_id
             )
+
+        if self._add_sensor_entities is None:
+            for entity in sensor_entities:
+                self._pending_sensors.append((entity, subentry.subentry_id))
+        elif sensor_entities:
+            self._add_sensor_entities(
+                sensor_entities, config_subentry_id=subentry.subentry_id
+            )
+
+        if sensor_entities:
+            await self.async_refresh_receivers()
+
         return len(commands)
 
     async def async_remove_command(
@@ -336,7 +366,7 @@ class RemoteManager:
                     unique_ids.add(
                         input_signal_unique_id(subentry.unique_id, signal_name)
                     )
-                else:
+                if self.is_output_signal(command_data):
                     unique_ids.add(
                         output_signal_unique_id(subentry.unique_id, signal_name)
                     )

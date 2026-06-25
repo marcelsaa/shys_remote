@@ -16,6 +16,7 @@ from .const import (
     COMMAND_TYPE_RAW,
     DEFAULT_CARRIER_FREQUENCY,
     DEFAULT_LEARN_TIMEOUT,
+    DIRECTION_BOTH,
     DIRECTION_OUTPUT,
     DOMAIN,
 )
@@ -96,7 +97,7 @@ async def async_learn_command(
     transmitter = transmitter_entity_id or manager.get_transmitter_entity_id(subentry)
 
     validate_receiver(hass, receiver)
-    if direction == DIRECTION_OUTPUT:
+    if direction in (DIRECTION_OUTPUT, DIRECTION_BOTH):
         validate_emitter(hass, transmitter)
 
     subentry_commands = manager.get_subentry_commands(subentry.subentry_id)

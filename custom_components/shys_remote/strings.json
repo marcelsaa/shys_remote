@@ -84,7 +84,7 @@
             "irdb_remote": "Remote"
           },
           "data_description": {
-            "irdb_remote": "Choose a remote to import. The signals are imported immediately after selection. Use the page entries when there are many results."
+            "irdb_remote": "Choose a remote to import. You choose the signal direction in the next step. Use the page entries when there are many results."
           },
           "data_options": {
             "irdb_remote": {
@@ -94,7 +94,20 @@
         },
         "irdb_confirm": {
           "title": "Confirm import",
-          "description": "Import {count} signals from {remote}. {skipped} unsupported signals will be skipped.\n\nSource: {attribution} ({license})."
+          "description": "Import {count} signals from {remote}. {skipped} unsupported signals will be skipped.\n\nSource: {attribution} ({license}).",
+          "data": {
+            "direction": "Direction"
+          },
+          "data_description": {
+            "direction": "Output creates send buttons. Input creates binary sensors. Both creates a button and binary sensor for each signal."
+          },
+          "data_options": {
+            "direction": {
+              "output": "Send (Output)",
+              "input": "Receive (Input)",
+              "both": "Both (Input + Output)"
+            }
+          }
         },
         "reconfigure": {
           "title": "Manage {device}",
@@ -129,13 +142,14 @@
           },
           "data_description": {
             "name": "Unique name for this signal on the device, for example power or volume_up.",
-            "direction": "Output creates a send button. Input creates a binary sensor that reacts to the signal.",
+            "direction": "Output creates a send button. Input creates a binary sensor. Both creates a button and binary sensor at once.",
             "timeout": "How long Home Assistant waits for the next signal after you submit this form."
           },
           "data_options": {
             "direction": {
               "output": "Send (Output)",
-              "input": "Receive (Input)"
+              "input": "Receive (Input)",
+              "both": "Both (Input + Output)"
             }
           }
         },
@@ -197,7 +211,7 @@
         },
         "direction": {
           "name": "Direction",
-          "description": "Output signals can be sent later, input signals trigger a binary sensor."
+          "description": "Output signals can be sent later, input signals trigger a binary sensor. Both creates a button and binary sensor."
         },
         "receiver_entity_id": {
           "name": "Receiver",

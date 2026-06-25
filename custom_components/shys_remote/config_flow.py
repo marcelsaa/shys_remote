@@ -24,6 +24,7 @@ from .const import (
     ATTR_TRANSMITTER_ENTITY_ID,
     CONF_DEBOUNCE_MS,
     CONF_DEVICE_NAME,
+    CONF_IRDB_DIRECTION,
     CONF_IRDB_PATH,
     CONF_IRDB_QUERY,
     CONF_IRDB_REMOTE,
@@ -35,6 +36,7 @@ from .const import (
     DEFAULT_LEARN_TIMEOUT,
     DEFAULT_MATCH_TOLERANCE,
     DEFAULT_PULSE_MS,
+    DIRECTION_BOTH,
     DIRECTION_INPUT,
     DIRECTION_OUTPUT,
     DOMAIN,
@@ -131,17 +133,26 @@ def _device_schema() -> vol.Schema:
     )
 
 
+def _direction_schema() -> vol.Schema:
+    """Return the schema for signal direction selection."""
+    return vol.Schema(
+        {
+            vol.Required(ATTR_DIRECTION, default=DIRECTION_OUTPUT): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[DIRECTION_OUTPUT, DIRECTION_INPUT, DIRECTION_BOTH],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+    )
+
+
 def _learn_schema() -> vol.Schema:
     """Return the schema for learning a signal."""
     return vol.Schema(
         {
             vol.Required(ATTR_NAME): selector.TextSelector(),
-            vol.Required(ATTR_DIRECTION, default=DIRECTION_OUTPUT): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[DIRECTION_OUTPUT, DIRECTION_INPUT],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
-            ),
+            **_direction_schema().schema,
             vol.Optional(ATTR_TIMEOUT, default=DEFAULT_LEARN_TIMEOUT): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=1,
@@ -506,6 +517,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         transmitter: str,
         *,
         irdb_path: str | None = None,
+        irdb_direction: str | None = None,
     ) -> SubentryFlowResult:
         """Create a device subentry."""
         data: dict[str, str] = {
@@ -514,6 +526,8 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         }
         if irdb_path:
             data[CONF_IRDB_PATH] = irdb_path
+        if irdb_direction:
+            data[CONF_IRDB_DIRECTION] = irdb_direction
 
         return self.async_create_entry(
             title=device_name,
@@ -525,6 +539,8 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         self,
         pending_device: dict[str, Any],
         irdb_path: str,
+        *,
+        irdb_direction: str = DIRECTION_OUTPUT,
     ) -> tuple[SubentryFlowResult | None, dict[str, str]]:
         """Validate pending device data and create a subentry for IRDB import."""
         errors: dict[str, str] = {}
@@ -556,6 +572,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                             receiver,
                             transmitter,
                             irdb_path=irdb_path,
+                            irdb_direction=irdb_direction,
                         ),
                         errors,
                     )
@@ -718,16 +735,15 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                     if preview["signal_count"] == 0:
                         errors["base"] = "irdb_no_supported_signals"
                     else:
-                        pending_device = self._get_pending_device()
-                        if pending_device is None:
-                            return await self.async_step_user()
-                        result, create_errors = self._try_create_irdb_device(
-                            pending_device, selected_path
+                        self._set_import_preview(
+                            {
+                                "path": selected_path,
+                                "label": selected_entry["label"],
+                                "signal_count": preview["signal_count"],
+                                "skipped_count": preview["skipped_count"],
+                            }
                         )
-                        if result:
-                            self._clear_flow_search_results()
-                            return result
-                        errors.update(create_errors)
+                        return await self.async_step_irdb_confirm()
 
         return self.async_show_form(
             step_id="irdb_pick_remote",
@@ -750,56 +766,44 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_irdb_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Confirm importing a remote from the database."""
+        """Confirm IRDB import options and create the device."""
         pending_device = self._get_pending_device()
         import_preview = self._get_import_preview()
 
         if not pending_device or not import_preview:
             return await self.async_step_user()
 
+        placeholders = {
+            **irdb_attribution_placeholders(),
+            "remote": import_preview["label"],
+            "count": str(import_preview["signal_count"]),
+            "skipped": str(import_preview["skipped_count"]),
+        }
+
         if user_input is not None:
             errors: dict[str, str] = {}
-            try:
-                preview = await self._get_irdb_client().async_preview_remote(
-                    import_preview["path"]
-                )
-            except HomeAssistantError:
-                errors["base"] = "irdb_download_failed"
-            except Exception:
-                _LOGGER.exception(
-                    "IRDB preview failed for %s", import_preview["path"]
-                )
-                errors["base"] = "irdb_download_failed"
-            else:
-                result, create_errors = self._try_create_irdb_device(
-                    pending_device, import_preview["path"]
-                )
-                if result:
-                    self._clear_flow_search_results()
-                    return result
-                errors.update(create_errors)
+            direction = user_input.get(ATTR_DIRECTION, DIRECTION_OUTPUT)
+            result, create_errors = self._try_create_irdb_device(
+                pending_device,
+                import_preview["path"],
+                irdb_direction=direction,
+            )
+            if result:
+                self._clear_flow_search_results()
+                return result
+            errors.update(create_errors)
 
-            self._set_confirm_only()
             return self.async_show_form(
                 step_id="irdb_confirm",
-                description_placeholders={
-                    **irdb_attribution_placeholders(),
-                    "remote": import_preview["label"],
-                    "count": str(import_preview["signal_count"]),
-                    "skipped": str(import_preview["skipped_count"]),
-                },
+                data_schema=_direction_schema(),
+                description_placeholders=placeholders,
                 errors=errors,
             )
 
-        self._set_confirm_only()
         return self.async_show_form(
             step_id="irdb_confirm",
-            description_placeholders={
-                **irdb_attribution_placeholders(),
-                "remote": import_preview["label"],
-                "count": str(import_preview["signal_count"]),
-                "skipped": str(import_preview["skipped_count"]),
-            },
+            data_schema=_direction_schema(),
+            description_placeholders=placeholders,
         )
 
     async def async_step_reconfigure(

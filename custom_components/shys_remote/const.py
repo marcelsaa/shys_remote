@@ -20,6 +20,7 @@ DEFAULT_DEBOUNCE_MS = 300
 
 DIRECTION_OUTPUT = "output"
 DIRECTION_INPUT = "input"
+DIRECTION_BOTH = "both"
 
 SERVICE_LEARN = "learn"
 SERVICE_SEND = "send"
@@ -45,6 +46,7 @@ SOURCE_MANUAL = "manual"
 SOURCE_IRDB = "irdb"
 
 CONF_IRDB_PATH = "irdb_path"
+CONF_IRDB_DIRECTION = "irdb_direction"
 CONF_IRDB_QUERY = "irdb_query"
 CONF_IRDB_REMOTE = "irdb_remote"
 CONF_IRDB_CATEGORY = "irdb_category"

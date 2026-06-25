@@ -10,8 +10,20 @@ integration.
 - **Output signals** become `button` entities and send learned codes.
 - **Input signals** become pulsing `binary_sensor` entities when a matching code
   is received.
+- **Both** creates a button and a binary sensor for the same signal — useful when
+  you want to send and detect the same key.
 - **Flipper-IRDB import** lets you search a bundled remote database and import
-  all supported buttons during device setup.
+  supported signals during device setup.
+
+### Signal direction
+
+Every signal (learned manually or imported from IRDB) has a direction:
+
+| Direction | Entities created |
+| --- | --- |
+| `output` | Send button |
+| `input` | Binary sensor (pulses on match) |
+| `both` | Send button **and** binary sensor |
 
 ## Requirements
 
@@ -35,8 +47,8 @@ SHYS Remote  →  learn, send and match signals per logical device
 ```
 
 When you add a device in SHYS Remote, you pick one **infrared receiver** and one
-**infrared emitter** from Home Assistant. Those entities must exist before setup —
-usually from an ESPHome node that uses the
+**infrared emitter** from Home Assistant. Those entities must exist before setup — usually
+from an ESPHome node that uses the
 [`ir_rf_proxy`](https://esphome.io/components/ir_rf_proxy/) platform.
 
 ## ESPHome reference setup
@@ -124,28 +136,31 @@ Copy `custom_components/shys_remote` into your Home Assistant
   <img src="assets/add_device.png" alt="Add device — name, receiver, transmitter and signal source" width="480">
 </p>
 
-Each logical device appears as its own device in Home Assistant. Every learned
-output signal is exposed as a button; every input signal as a binary sensor.
+Each logical device appears as its own device in Home Assistant. Depending on the
+chosen direction, signals become buttons, binary sensors, or both.
 
 ### Option A — Import from Flipper-IRDB
 
-Choose **Import from IR database** when adding the device (or set the signal source
-accordingly in the wizard). Search by brand, model or device type and optionally
-filter by category.
+Choose **Import from IR database** when adding the device. Search by brand, model or
+device type and optionally filter by category.
 
 <p align="center">
   <img src="assets/search_irdb.png" alt="Search the bundled Flipper-IRDB" width="480">
 </p>
 
-Pick a matching remote from the results — all supported buttons are imported in one step.
+Pick a matching remote from the results. On the next step, choose the signal
+direction (`output`, `input` or `both`) and confirm the import.
 
 <p align="center">
   <img src="assets/choose_preset.png" alt="Choose a remote preset from search results" width="480">
 </p>
 
 <p align="center">
-  <img src="assets/device_by_preset.png" alt="Imported device with button entities for each remote key" width="480">
+  <img src="assets/device_by_preset.png" alt="Imported device with entities for each remote key" width="480">
 </p>
+
+By default, IRDB imports use **output** (send buttons). Choose **both** if you also
+want binary sensors for automations when the same keys are received.
 
 ### Option B — Learn signals manually
 
@@ -158,8 +173,8 @@ card and choose **Learn signal**.
   <img src="assets/learn_signal.png" alt="Learn signal — name, direction and timeout" width="420">
 </p>
 
-Output signals become pressable buttons; input signals become binary sensors that
-pulse when a matching code is received.
+Select **output**, **input** or **both**, submit the form, then press the button on
+the physical remote within the timeout.
 
 <p align="center">
   <img src="assets/device_with_in_and_out.png" alt="Device with output button and input binary sensor" width="480">
@@ -191,7 +206,9 @@ for all devices:
 The `device` parameter is the device **slug** shown in the subentry settings
 (for example `soundbar_buro`).
 
-Example:
+The `direction` parameter for `learn` accepts `output`, `input` or `both`.
+
+Example — learn an output signal:
 
 ```yaml
 service: shys_remote.learn
@@ -202,6 +219,17 @@ data:
   timeout: 15
 ```
 
+Example — learn a signal for sending and receiving:
+
+```yaml
+service: shys_remote.learn
+data:
+  device: soundbar_buro
+  name: power
+  direction: both
+  timeout: 15
+```
+
 ## Flipper-IRDB
 
 The search index is shipped locally in `data/irdb_index.json`. Individual `.ir`
@@ -209,7 +237,7 @@ files are downloaded from GitHub only when you import a remote.
 
 - Source: [Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB)
 - License: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
-- Details: see [`data/IRDB_NOTICE.md`](custom_components/shys_remote/data/IRDB_NOTICE.md)
+- Details: see [`data/IRDB_NOTICE.md`](data/IRDB_NOTICE.md)
 
 ## Removal
 
@@ -234,7 +262,16 @@ Fernbedienungssignalen über die eingebaute `infrared`-Integration.
 
 - **Output:** Buttons zum Senden
 - **Input:** Binärsensoren bei erkanntem Signal
+- **Beides:** Button und Binärsensor für dasselbe Signal
 - **Flipper-IRDB:** Lokale Suche und Import beim Gerät anlegen
+
+### Signalrichtung
+
+| Richtung | Angelegte Entitäten |
+| --- | --- |
+| `output` | Sende-Button |
+| `input` | Binärsensor (kurzer Impuls bei Treffer) |
+| `both` | Sende-Button **und** Binärsensor |
 
 ### Hardware (ESPHome)
 
@@ -255,10 +292,12 @@ Ausführliches Beispiel mit YAML und Links: Abschnitt **ESPHome reference setup*
 1. Integration **SHYS Remote** hinzufügen
 2. Unter der Integration **Gerät hinzufügen** — Name, Receiver, Transmitter und
    Signalquelle wählen (siehe Screenshot oben)
-3. **Flipper-IRDB:** Datenbank durchsuchen, Fernbedienung wählen → alle Tasten
-   werden als Buttons angelegt
-4. **Manuell:** Unter **Gerät verwalten → Signal anlernen** Output- oder
-   Input-Signale aufzeichnen
+3. **Flipper-IRDB:** Datenbank durchsuchen, Fernbedienung wählen, im
+   Bestätigungsschritt die Richtung festlegen (`output`, `input` oder `both`) →
+   Signale werden importiert
+4. **Manuell:** Unter **Gerät verwalten → Signal anlernen** Richtung wählen
+   (Senden, Empfangen oder Beides), Formular absenden und Taste auf der
+   Fernbedienung drücken
 
 Screenshots und Ablauf: Abschnitt **Quick start** oben (Oberfläche auf Deutsch).
 

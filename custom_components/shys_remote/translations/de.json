@@ -84,7 +84,7 @@
             "irdb_remote": "Fernbedienung"
           },
           "data_description": {
-            "irdb_remote": "Fernbedienung zum Import wählen. Die Signale werden direkt nach der Auswahl importiert. Bei vielen Treffern über die Seiten-Einträge blättern."
+            "irdb_remote": "Fernbedienung zum Import wählen. Im nächsten Schritt legst du die Richtung fest. Bei vielen Treffern über die Seiten-Einträge blättern."
           },
           "data_options": {
             "irdb_remote": {
@@ -94,7 +94,20 @@
         },
         "irdb_confirm": {
           "title": "Import bestätigen",
-          "description": "{count} Signale von {remote} importieren. {skipped} nicht unterstützte Signale werden übersprungen.\n\nQuelle: {attribution} ({license})."
+          "description": "{count} Signale von {remote} importieren. {skipped} nicht unterstützte Signale werden übersprungen.\n\nQuelle: {attribution} ({license}).",
+          "data": {
+            "direction": "Richtung"
+          },
+          "data_description": {
+            "direction": "Output erzeugt Sende-Buttons. Input erzeugt Binary Sensoren. Beides erzeugt jeweils Button und Binary Sensor pro Signal."
+          },
+          "data_options": {
+            "direction": {
+              "output": "Senden (Output)",
+              "input": "Empfangen (Input)",
+              "both": "Beides (Input + Output)"
+            }
+          }
         },
         "reconfigure": {
           "title": "{device} verwalten",
@@ -129,13 +142,14 @@
           },
           "data_description": {
             "name": "Eindeutiger Name für dieses Signal am Gerät, z. B. power oder volume_up.",
-            "direction": "Output erzeugt einen Sende-Button. Input erzeugt einen Binary Sensor, der auf das Signal reagiert.",
+            "direction": "Output erzeugt einen Sende-Button. Input erzeugt einen Binary Sensor. Beides erzeugt Button und Binary Sensor gleichzeitig.",
             "timeout": "Wie lange Home Assistant nach dem Absenden des Formulars auf das nächste Signal wartet."
           },
           "data_options": {
             "direction": {
               "output": "Senden (Output)",
-              "input": "Empfangen (Input)"
+              "input": "Empfangen (Input)",
+              "both": "Beides (Input + Output)"
             }
           }
         },
@@ -197,7 +211,7 @@
         },
         "direction": {
           "name": "Richtung",
-          "description": "Output-Signale können gesendet werden, Input-Signale lösen einen Binärsensor aus."
+          "description": "Output-Signale können gesendet werden, Input-Signale lösen einen Binärsensor aus. Beides erzeugt Button und Binärsensor."
         },
         "receiver_entity_id": {
           "name": "Empfänger",

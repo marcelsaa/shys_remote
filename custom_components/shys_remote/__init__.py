@@ -22,9 +22,11 @@ from .const import (
     ATTR_RECEIVER_ENTITY_ID,
     ATTR_TIMEOUT,
     ATTR_TRANSMITTER_ENTITY_ID,
+    CONF_IRDB_DIRECTION,
     CONF_IRDB_PATH,
     CONFIG_VERSION,
     DEFAULT_LEARN_TIMEOUT,
+    DIRECTION_BOTH,
     DIRECTION_INPUT,
     DIRECTION_OUTPUT,
     DOMAIN,
@@ -34,7 +36,6 @@ from .const import (
     SERVICE_LEARN,
     SERVICE_SEND,
     SUBENTRY_DEVICE,
-    get_signal_direction,
 )
 from .irdb import IrdbClient
 from .manager import RemoteManager
@@ -52,7 +53,7 @@ LEARN_SCHEMA = vol.Schema(
         vol.Required(ATTR_DEVICE): cv.slug,
         vol.Required(ATTR_NAME): cv.slug,
         vol.Optional(ATTR_DIRECTION, default=DIRECTION_OUTPUT): vol.In(
-            (DIRECTION_OUTPUT, DIRECTION_INPUT)
+            (DIRECTION_OUTPUT, DIRECTION_INPUT, DIRECTION_BOTH)
         ),
         vol.Optional(ATTR_RECEIVER_ENTITY_ID): cv.entity_id,
         vol.Optional(ATTR_TRANSMITTER_ENTITY_ID): cv.entity_id,
@@ -192,11 +193,15 @@ async def _async_process_pending_irdb_imports(
         if not path:
             continue
 
+        direction = subentry.data.get(CONF_IRDB_DIRECTION, DIRECTION_OUTPUT)
+
         try:
             preview = await client.async_preview_remote(path)
-            imported = await manager.async_import_commands_bulk(
-                subentry, preview["commands"]
-            )
+            commands = {
+                signal_name: {**command_data, ATTR_DIRECTION: direction}
+                for signal_name, command_data in preview["commands"].items()
+            }
+            imported = await manager.async_import_commands_bulk(subentry, commands)
         except HomeAssistantError as err:
             _LOGGER.error(
                 "Failed to import IRDB remote '%s' for device '%s': %s",
@@ -209,7 +214,7 @@ async def _async_process_pending_irdb_imports(
         new_data = {
             key: value
             for key, value in subentry.data.items()
-            if key != CONF_IRDB_PATH
+            if key not in (CONF_IRDB_PATH, CONF_IRDB_DIRECTION)
         }
         hass.config_entries.async_update_subentry(
             entry,
@@ -294,7 +299,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 },
             )
 
-        if get_signal_direction(command_data) != DIRECTION_OUTPUT:
+        if not manager.is_output_signal(command_data):
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="signal_not_output",
