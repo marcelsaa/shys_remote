@@ -15,10 +15,12 @@ from .const import (
     ATTR_MEDIUM,
     ATTR_NAME,
     COMMAND_TYPE_RAW,
+    CONF_RF_FREQUENCY,
     CONF_SEND_REPEAT_COUNT,
     CONF_SEND_REPEAT_DELAY_MS,
     DEFAULT_CARRIER_FREQUENCY,
     DEFAULT_LEARN_TIMEOUT,
+    DEFAULT_RF_FREQUENCY,
     DIRECTION_BOTH,
     DIRECTION_INPUT,
     DIRECTION_OUTPUT,
@@ -148,10 +150,20 @@ async def async_learn_command(
         )
 
     medium = subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR)
+    if medium == SIGNAL_MEDIUM_RF:
+        # ESPHome's infrared-compatible receiver only ever reports raw timings
+        # (InfraredReceivedSignal(timings=...)), never the RF operating
+        # frequency. The device's configured RF frequency is therefore the
+        # only correct source here - signal.modulation would silently store
+        # the IR default (~38 kHz), which a real RF transmitter would reject.
+        carrier_frequency = subentry.data.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY)
+    else:
+        carrier_frequency = signal.modulation or DEFAULT_CARRIER_FREQUENCY
+
     command_data = {
         "type": COMMAND_TYPE_RAW,
         ATTR_DIRECTION: direction,
-        "carrier_frequency": signal.modulation or DEFAULT_CARRIER_FREQUENCY,
+        "carrier_frequency": carrier_frequency,
         "command": list(signal.timings),
         "medium": medium,
         "backend": (

@@ -94,21 +94,31 @@ def _install_infrared_component_stub() -> None:
 
 
 def _install_radio_frequency_component_stub() -> None:
-    """Stub the sibling ``homeassistant.components.radio_frequency`` component."""
+    """Stub the sibling ``homeassistant.components.radio_frequency`` component.
+
+    The real API requires both frequency and modulation to look up compatible
+    transmitters (``async_get_transmitters``) - there is no ``async_get_emitters``.
+    """
     if "homeassistant.components.radio_frequency" in sys.modules:
         return
+
+    import enum
 
     import homeassistant.components as ha_components
 
     module = types.ModuleType("homeassistant.components.radio_frequency")
 
-    def async_get_emitters(hass):
+    class ModulationType(enum.Enum):
+        OOK = "ook"
+
+    def async_get_transmitters(hass, *, frequency, modulation):
         return []
 
     async def async_send_command(hass, entity_id, command, *, context=None):
         return None
 
-    module.async_get_emitters = async_get_emitters
+    module.ModulationType = ModulationType
+    module.async_get_transmitters = async_get_transmitters
     module.async_send_command = async_send_command
 
     sys.modules["homeassistant.components.radio_frequency"] = module

@@ -43,6 +43,7 @@
           "data": {
             "device_name": "Gerätename",
             "medium": "Signal-Medium",
+            "rf_frequency": "RF-Frequenz",
             "receiver_entity_id": "Empfänger",
             "transmitter_entity_id": "Transmitter",
             "signal_source": "Signale",
@@ -52,6 +53,7 @@
           "data_description": {
             "device_name": "Name des logischen Geräts in Home Assistant, z. B. TV oder AV-Empfänger.",
             "medium": "Signalübertragung für dieses Gerät wählen: Infrared für bestehende IR-Workflows, Funk für RF-Transmitter.",
+            "rf_frequency": "Betriebsfrequenz in Hz für Funk-Geräte, z. B. 433920000 für 433,92 MHz. Wird bei Infrarot-Geräten ignoriert.",
             "receiver_entity_id": "Optionaler Empfänger zum Anlernen und für Input-Signale. Leer lassen, wenn du nur senden möchtest.",
             "transmitter_entity_id": "Transmitter zum Senden von Output-Signalen.",
             "signal_source": "Signale später manuell anlernen oder beim Anlegen Tasten aus der mitgelieferten Flipper-IRDB importieren.",
@@ -106,6 +108,7 @@
           "data": {
             "device_name": "Gerätename",
             "medium": "Signal-Medium",
+            "rf_frequency": "RF-Frequenz",
             "receiver_entity_id": "Empfänger",
             "transmitter_entity_id": "Transmitter",
             "send_repeat_count": "Sendewiederholungen",
@@ -114,6 +117,7 @@
           "data_description": {
             "device_name": "Anzeigename dieses Geräts in Home Assistant.",
             "medium": "Übertragungsart für dieses Gerät wählen: Infrarot oder Funk (RF).",
+            "rf_frequency": "Betriebsfrequenz in Hz für Funk-Geräte, z. B. 433920000 für 433,92 MHz. Wird bei Infrarot-Geräten ignoriert.",
             "receiver_entity_id": "Optionaler Empfänger zum Anlernen und für Input-Signale.",
             "transmitter_entity_id": "Transmitter zum Senden von Output-Signalen.",
             "send_repeat_count": "Wie oft jedes Signal beim Senden hintereinander gesendet wird.",

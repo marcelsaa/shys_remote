@@ -130,6 +130,66 @@ def test_send_output_command_dispatches_to_infrared(monkeypatch) -> None:
     assert sent_calls == [("remote.ir_blaster", [9000, -4500, 560])]
 
 
+def test_learn_command_stores_device_rf_frequency_not_signal_modulation(monkeypatch) -> None:
+    """ESPHome's infrared-compatible receiver never reports the RF frequency in
+    signal.modulation - it only ever sends raw timings. Using signal.modulation
+    for RF would silently store the IR default (~38 kHz) instead of the
+    device's real RF transmit frequency."""
+
+    class _FakeSignal:
+        timings = [350, -1050, 350, -350]
+        modulation = 38000  # what the IR-compat receiver reports, even for RF
+
+    def fake_subscribe_receiver(hass, entity_id, callback_):
+        callback_(_FakeSignal())
+
+        def _unsubscribe() -> None:
+            return None
+
+        return _unsubscribe
+
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_receivers",
+        lambda hass: ["remote.ir_receiver"],
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_subscribe_receiver",
+        fake_subscribe_receiver,
+    )
+
+    manager = _manager()
+    manager.commands = {}
+
+    captured: dict = {}
+
+    async def fake_add_command(subentry, name, command_data):
+        captured["command_data"] = command_data
+
+    manager.async_add_command = fake_add_command
+
+    subentry = SimpleNamespace(
+        data={
+            "transmitter_entity_id": "switch.rf_transmitter",
+            "receiver_entity_id": "remote.ir_receiver",
+            "medium": "rf",
+            "rf_frequency": 433_920_000,
+        },
+        subentry_id="dev1",
+        title="Test RF device",
+    )
+
+    asyncio.run(
+        remote_module.async_learn_command(
+            hass=object(),
+            manager=manager,
+            subentry=subentry,
+            command_name="power",
+        )
+    )
+
+    assert captured["command_data"]["carrier_frequency"] == 433_920_000
+
+
 def test_send_output_command_rf_without_transmitter_raises() -> None:
     command_data = {
         "command": [350, -1050],

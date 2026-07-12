@@ -32,6 +32,7 @@ from .const import (
     CONF_IRDB_CATEGORY,
     CONF_MATCH_TOLERANCE,
     CONF_PULSE_MS,
+    CONF_RF_FREQUENCY,
     CONF_SEND_REPEAT_COUNT,
     CONF_SEND_REPEAT_DELAY_MS,
     CONF_SIGNAL_SOURCE,
@@ -39,6 +40,7 @@ from .const import (
     DEFAULT_LEARN_TIMEOUT,
     DEFAULT_MATCH_TOLERANCE,
     DEFAULT_PULSE_MS,
+    DEFAULT_RF_FREQUENCY,
     DEFAULT_SEND_REPEAT_COUNT,
     DEFAULT_SEND_REPEAT_DELAY_MS,
     DIRECTION_BOTH,
@@ -126,25 +128,41 @@ def _medium_schema_field() -> dict:
     }
 
 
-def _transport_entity_schema_fields(hass) -> dict:
+def _rf_frequency_schema_field() -> dict:
+    """Return the schema field for the RF transmit frequency (RF devices only)."""
+    return {
+        vol.Optional(CONF_RF_FREQUENCY, default=DEFAULT_RF_FREQUENCY): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                unit_of_measurement="Hz",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        ),
+    }
+
+
+def _transport_entity_schema_fields(hass, *, rf_frequency: int = DEFAULT_RF_FREQUENCY) -> dict:
     """Return schema fields for receiver/transmitter entities known to the transports."""
     return {
         vol.Optional(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
             selector.EntitySelectorConfig(include_entities=_receiver_entity_ids(hass))
         ),
         vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
-            selector.EntitySelectorConfig(include_entities=_transmitter_entity_ids(hass))
+            selector.EntitySelectorConfig(
+                include_entities=_transmitter_entity_ids(hass, rf_frequency=rf_frequency)
+            )
         ),
     }
 
 
-def _device_edit_schema(hass) -> vol.Schema:
+def _device_edit_schema(hass, *, rf_frequency: int = DEFAULT_RF_FREQUENCY) -> vol.Schema:
     """Return the schema for editing an existing device."""
     return vol.Schema(
         {
             vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
             **_medium_schema_field(),
-            **_transport_entity_schema_fields(hass),
+            **_rf_frequency_schema_field(),
+            **_transport_entity_schema_fields(hass, rf_frequency=rf_frequency),
             **_device_send_schema_fields(),
         }
     )
@@ -160,6 +178,7 @@ def _device_schema(hass, *, include_manual_source: bool = True) -> vol.Schema:
         {
             vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
             **_medium_schema_field(),
+            **_rf_frequency_schema_field(),
             **_transport_entity_schema_fields(hass),
             vol.Required(CONF_SIGNAL_SOURCE, default=SOURCE_MANUAL): selector.SelectSelector(
                 selector.SelectSelectorConfig(
@@ -243,13 +262,29 @@ def _options_schema() -> vol.Schema:
     )
 
 
-def _radio_frequency_emitters(hass) -> list[str]:
-    """Return known radio-frequency emitter entities, if that backend is loaded."""
+def _radio_frequency_transmitters(hass, rf_frequency: int) -> list[str]:
+    """Return known RF transmitter entities compatible with the given frequency.
+
+    Home Assistant's radio_frequency integration requires both a frequency and a
+    modulation to look up compatible transmitters, and raises HomeAssistantError
+    if the backend isn't loaded or no matching transmitter exists - both are
+    treated as "no known transmitters" here.
+    """
     try:
-        from homeassistant.components import radio_frequency
+        from homeassistant.components.radio_frequency import (
+            ModulationType,
+            async_get_transmitters,
+        )
     except ImportError:
         return []
-    return list(radio_frequency.async_get_emitters(hass))
+    try:
+        return list(
+            async_get_transmitters(
+                hass, frequency=rf_frequency, modulation=ModulationType.OOK
+            )
+        )
+    except HomeAssistantError:
+        return []
 
 
 def _receiver_entity_ids(hass) -> list[str]:
@@ -261,22 +296,26 @@ def _receiver_entity_ids(hass) -> list[str]:
     return sorted(infrared.async_get_receivers(hass))
 
 
-def _transmitter_entity_ids(hass) -> list[str]:
+def _transmitter_entity_ids(hass, *, rf_frequency: int = DEFAULT_RF_FREQUENCY) -> list[str]:
     """Return known transmitter entities for both infrared and RF backends."""
     entities = set(infrared.async_get_emitters(hass))
-    entities.update(_radio_frequency_emitters(hass))
+    entities.update(_radio_frequency_transmitters(hass, rf_frequency))
     return sorted(entities)
 
 
 def _validate_transport_entities(
-    hass, receiver: str | None, transmitter: str, medium: str
+    hass,
+    receiver: str | None,
+    transmitter: str,
+    medium: str,
+    rf_frequency: int = DEFAULT_RF_FREQUENCY,
 ) -> str | None:
     """Validate receiver and transmitter entities for the selected medium."""
     if receiver and receiver not in infrared.async_get_receivers(hass):
         return "invalid_receiver"
 
     if medium == SIGNAL_MEDIUM_RF:
-        if transmitter not in _radio_frequency_emitters(hass):
+        if transmitter not in _radio_frequency_transmitters(hass, rf_frequency):
             return "invalid_emitter"
         return None
 
@@ -404,6 +443,9 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         self.context[CTX_IRDB_PENDING] = {
             CONF_DEVICE_NAME: user_input[CONF_DEVICE_NAME],
             ATTR_MEDIUM: user_input.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR),
+            CONF_RF_FREQUENCY: int(
+                user_input.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY)
+            ),
             ATTR_RECEIVER_ENTITY_ID: receiver,
             ATTR_TRANSMITTER_ENTITY_ID: _normalize_entity_id(
                 user_input[ATTR_TRANSMITTER_ENTITY_ID]
@@ -595,6 +637,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         transmitter: str,
         *,
         medium: str = SIGNAL_MEDIUM_IR,
+        rf_frequency: int = DEFAULT_RF_FREQUENCY,
         send_options: dict[str, int] | None = None,
         irdb_path: str | None = None,
         irdb_direction: str | None = None,
@@ -606,6 +649,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         }
         data: dict[str, str | int] = {
             ATTR_MEDIUM: medium,
+            CONF_RF_FREQUENCY: rf_frequency,
             ATTR_TRANSMITTER_ENTITY_ID: transmitter,
             CONF_SEND_REPEAT_COUNT: send_settings[CONF_SEND_REPEAT_COUNT],
             CONF_SEND_REPEAT_DELAY_MS: send_settings[CONF_SEND_REPEAT_DELAY_MS],
@@ -639,12 +683,13 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             pending_device.get(ATTR_TRANSMITTER_ENTITY_ID)
         )
         medium = str(pending_device.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) or SIGNAL_MEDIUM_IR)
+        rf_frequency = int(pending_device.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY))
 
         if not device_name or not slugify(device_name):
             errors["base"] = "invalid_device_name"
         elif (
             error := _validate_transport_entities(
-                self.hass, receiver_value, transmitter, medium
+                self.hass, receiver_value, transmitter, medium, rf_frequency
             )
         ):
             errors["base"] = error
@@ -666,6 +711,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                             receiver_value,
                             transmitter,
                             medium=medium,
+                            rf_frequency=rf_frequency,
                             send_options=_send_options_from_input(pending_device),
                             irdb_path=irdb_path,
                             irdb_direction=irdb_direction,
@@ -690,6 +736,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             receiver_value = receiver or None
             transmitter = _normalize_entity_id(user_input[ATTR_TRANSMITTER_ENTITY_ID])
             medium = str(user_input.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) or SIGNAL_MEDIUM_IR)
+            rf_frequency = int(user_input.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY))
             signal_source = user_input.get(CONF_SIGNAL_SOURCE, SOURCE_MANUAL)
 
             if not device_name:
@@ -698,7 +745,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 errors[CONF_SIGNAL_SOURCE] = "manual_requires_receiver"
             elif (
                 error := _validate_transport_entities(
-                    self.hass, receiver_value, transmitter, medium
+                    self.hass, receiver_value, transmitter, medium, rf_frequency
                 )
             ):
                 errors["base"] = error
@@ -718,6 +765,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                         receiver_value,
                         transmitter,
                         medium=medium,
+                        rf_frequency=rf_frequency,
                         send_options=_send_options_from_input(user_input),
                     )
 
@@ -982,12 +1030,13 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 user_input.get(ATTR_MEDIUM, subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR))
                 or SIGNAL_MEDIUM_IR
             )
+            rf_frequency = int(user_input.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY))
 
             if not device_name:
                 errors["base"] = "invalid_device_name"
             elif (
                 error := _validate_transport_entities(
-                    self.hass, receiver_value, transmitter, medium
+                    self.hass, receiver_value, transmitter, medium, rf_frequency
                 )
             ):
                 errors["base"] = error
@@ -1004,6 +1053,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 else:
                     device_data: dict[str, str | int] = {
                         ATTR_MEDIUM: medium,
+                        CONF_RF_FREQUENCY: rf_frequency,
                         ATTR_TRANSMITTER_ENTITY_ID: transmitter,
                         **_send_options_from_input(user_input),
                     }
@@ -1019,10 +1069,16 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         return self.async_show_form(
             step_id="edit_device",
             data_schema=self.add_suggested_values_to_schema(
-                _device_edit_schema(self.hass),
+                _device_edit_schema(
+                    self.hass,
+                    rf_frequency=subentry.data.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY),
+                ),
                 {
                     CONF_DEVICE_NAME: subentry.title,
                     ATTR_MEDIUM: subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR),
+                    CONF_RF_FREQUENCY: subentry.data.get(
+                        CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY
+                    ),
                     ATTR_RECEIVER_ENTITY_ID: subentry.data.get(
                         ATTR_RECEIVER_ENTITY_ID
                     ),

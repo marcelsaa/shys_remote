@@ -15,6 +15,16 @@ import sys
 
 import shys_remote.config_flow as config_flow
 
+RF_FREQUENCY = 433_920_000
+
+
+def _rf_transmitters(entities: list[str]):
+    def _async_get_transmitters(hass, *, frequency, modulation):
+        assert frequency == RF_FREQUENCY
+        return entities
+
+    return _async_get_transmitters
+
 
 def test_validate_transport_entities_ir_valid(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -57,12 +67,12 @@ def test_validate_transport_entities_checks_receiver_even_for_rf(monkeypatch) ->
         lambda hass: [],
     )
     monkeypatch.setattr(
-        "homeassistant.components.radio_frequency.async_get_emitters",
-        lambda hass: ["switch.rf_transmitter"],
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters(["switch.rf_transmitter"]),
     )
 
     error = config_flow._validate_transport_entities(
-        object(), "remote.unknown_receiver", "switch.rf_transmitter", "rf"
+        object(), "remote.unknown_receiver", "switch.rf_transmitter", "rf", RF_FREQUENCY
     )
 
     assert error == "invalid_receiver"
@@ -74,12 +84,12 @@ def test_validate_transport_entities_rf_valid(monkeypatch) -> None:
         lambda hass: ["remote.ir_receiver"],
     )
     monkeypatch.setattr(
-        "homeassistant.components.radio_frequency.async_get_emitters",
-        lambda hass: ["switch.rf_transmitter"],
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters(["switch.rf_transmitter"]),
     )
 
     error = config_flow._validate_transport_entities(
-        object(), "remote.ir_receiver", "switch.rf_transmitter", "rf"
+        object(), "remote.ir_receiver", "switch.rf_transmitter", "rf", RF_FREQUENCY
     )
 
     assert error is None
@@ -96,12 +106,37 @@ def test_validate_transport_entities_rf_rejects_ir_only_emitter(monkeypatch) -> 
         lambda hass: ["remote.ir_blaster"],
     )
     monkeypatch.setattr(
-        "homeassistant.components.radio_frequency.async_get_emitters",
-        lambda hass: [],
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters([]),
     )
 
     error = config_flow._validate_transport_entities(
-        object(), "remote.ir_receiver", "remote.ir_blaster", "rf"
+        object(), "remote.ir_receiver", "remote.ir_blaster", "rf", RF_FREQUENCY
+    )
+
+    assert error == "invalid_emitter"
+
+
+def test_validate_transport_entities_rf_treats_hass_error_as_no_transmitters(
+    monkeypatch,
+) -> None:
+    """radio_frequency.async_get_transmitters can raise HomeAssistantError; degrade to []."""
+    from homeassistant.exceptions import HomeAssistantError
+
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_receivers",
+        lambda hass: ["remote.ir_receiver"],
+    )
+
+    def _raise(hass, *, frequency, modulation):
+        raise HomeAssistantError("radio_frequency backend not loaded")
+
+    monkeypatch.setattr(
+        "homeassistant.components.radio_frequency.async_get_transmitters", _raise
+    )
+
+    error = config_flow._validate_transport_entities(
+        object(), "remote.ir_receiver", "switch.rf_transmitter", "rf", RF_FREQUENCY
     )
 
     assert error == "invalid_emitter"
@@ -122,21 +157,23 @@ def test_transmitter_entity_ids_unions_infrared_and_rf(monkeypatch) -> None:
         lambda hass: ["remote.ir_blaster"],
     )
     monkeypatch.setattr(
-        "homeassistant.components.radio_frequency.async_get_emitters",
-        lambda hass: ["switch.rf_transmitter"],
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters(["switch.rf_transmitter"]),
     )
 
-    assert config_flow._transmitter_entity_ids(object()) == [
+    assert config_flow._transmitter_entity_ids(object(), rf_frequency=RF_FREQUENCY) == [
         "remote.ir_blaster",
         "switch.rf_transmitter",
     ]
 
 
-def test_radio_frequency_emitters_returns_empty_when_component_missing(monkeypatch) -> None:
+def test_radio_frequency_transmitters_returns_empty_when_component_missing(
+    monkeypatch,
+) -> None:
     """If the radio_frequency component isn't installed, this must degrade to []."""
     monkeypatch.delitem(sys.modules, "homeassistant.components.radio_frequency", raising=False)
     monkeypatch.delattr(
         sys.modules["homeassistant.components"], "radio_frequency", raising=False
     )
 
-    assert config_flow._radio_frequency_emitters(object()) == []
+    assert config_flow._radio_frequency_transmitters(object(), RF_FREQUENCY) == []
