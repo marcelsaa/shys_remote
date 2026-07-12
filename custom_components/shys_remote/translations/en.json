@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "SHYS Remote",
-        "description": "This integration stores learned remote signals and reacts to incoming signals through infrared receivers and transmitters.\n\nAfter setup, add devices under the integration and learn signals for each device. Output signals are sent via buttons, input signals trigger binary sensors."
+        "description": "This integration stores learned remote signals and reacts to incoming signals through infrared receivers and infrared or radio-frequency transmitters.\n\nAfter setup, add devices under the integration and learn signals for each device. Output signals are sent via buttons, input signals trigger binary sensors."
       }
     },
     "abort": {
@@ -39,19 +39,21 @@
       "step": {
         "user": {
           "title": "Add device",
-          "description": "Create a device and select the infrared transmitter. The receiver is optional.\n\nWithout a receiver, only output signals are available; input/binary sensors and learning are disabled.",
+          "description": "Create a device and select the transmitter. The receiver is optional.\n\nWithout a receiver, only output signals are available; input/binary sensors and learning are disabled.",
           "data": {
             "device_name": "Device name",
-            "receiver_entity_id": "Infrared receiver",
-            "transmitter_entity_id": "Infrared transmitter",
+            "medium": "Signal medium",
+            "receiver_entity_id": "Receiver",
+            "transmitter_entity_id": "Transmitter",
             "signal_source": "Signals",
             "send_repeat_count": "Send repetitions",
             "send_repeat_delay_ms": "Delay between repetitions"
           },
           "data_description": {
             "device_name": "Name of the logical device in Home Assistant, for example TV or receiver.",
-            "receiver_entity_id": "Optional infrared receiver used for learning and for input signals. Leave empty if you only want to send commands.",
-            "transmitter_entity_id": "Infrared transmitter used to send output signals.",
+            "medium": "Choose the signal transport for this device: infrared for existing IR workflows, radio frequency for RF transmitters.",
+            "receiver_entity_id": "Optional receiver used for learning and for input signals. Leave empty if you only want to send commands.",
+            "transmitter_entity_id": "Transmitter used to send output signals.",
             "signal_source": "Learn signals manually later or import buttons from the bundled Flipper-IRDB during setup.",
             "send_repeat_count": "How many times each signal is sent in a row when triggered.",
             "send_repeat_delay_ms": "Wait time between consecutive send repetitions."
@@ -60,6 +62,10 @@
             "signal_source": {
               "manual": "Learn manually later",
               "irdb": "Import from IR database"
+            },
+            "medium": {
+              "ir": "Infrared",
+              "rf": "Radio frequency"
             }
           }
         },
@@ -124,18 +130,20 @@
         },
         "edit_device": {
           "title": "Edit device",
-          "description": "Change the name or infrared hardware for {device}.\n\nNote: without a receiver, learning and input/binary sensors are unavailable.",
+          "description": "Change the name or transport hardware for {device}.\n\nNote: without a receiver, learning and input/binary sensors are unavailable.",
           "data": {
             "device_name": "Device name",
-            "receiver_entity_id": "Infrared receiver",
-            "transmitter_entity_id": "Infrared transmitter",
+            "medium": "Signal medium",
+            "receiver_entity_id": "Receiver",
+            "transmitter_entity_id": "Transmitter",
             "send_repeat_count": "Send repetitions",
             "send_repeat_delay_ms": "Delay between repetitions"
           },
           "data_description": {
             "device_name": "Display name of this device in Home Assistant.",
-            "receiver_entity_id": "Optional infrared receiver used for learning and for input signals.",
-            "transmitter_entity_id": "Infrared transmitter used to send output signals.",
+            "medium": "Select the transport type for this device: infrared or radio frequency.",
+            "receiver_entity_id": "Optional receiver used for learning and for input signals.",
+            "transmitter_entity_id": "Transmitter used to send output signals.",
             "send_repeat_count": "How many times each signal is sent in a row when triggered.",
             "send_repeat_delay_ms": "Wait time between consecutive send repetitions."
           }
@@ -181,7 +189,7 @@
         "invalid_signal_name": "Please enter a valid signal name (letters, numbers, underscore).",
         "invalid_receiver": "The selected entity is not a valid infrared receiver.",
         "manual_requires_receiver": "Without a receiver, \"Learn manually later\" is not available. Use IR database import instead or select a receiver.",
-        "invalid_emitter": "The selected entity is not a valid infrared transmitter.",
+        "invalid_emitter": "The selected entity is not a valid transmitter for the selected signal medium.",
         "device_already_exists": "A device with this name already exists.",
         "command_already_exists": "This signal already exists on the device.",
         "learn_timeout": "No signal was received in time.",
@@ -230,7 +238,7 @@
         },
         "transmitter_entity_id": {
           "name": "Transmitter",
-          "description": "Optional override for the device's default infrared transmitter."
+          "description": "Optional override for the device's default transmitter."
         },
         "timeout": {
           "name": "Timeout",
@@ -284,7 +292,7 @@
       "message": "Entity '{entity_id}' is not an infrared receiver."
     },
     "invalid_emitter": {
-      "message": "Entity '{entity_id}' is not an infrared transmitter."
+      "message": "Entity '{entity_id}' is not a valid transmitter for the selected signal medium."
     },
     "receiver_required": {
       "message": "No infrared receiver is configured for this device."

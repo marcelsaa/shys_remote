@@ -30,6 +30,7 @@ SERVICE_DELETE = "delete"
 
 ATTR_DEVICE = "device"
 ATTR_DIRECTION = "direction"
+ATTR_MEDIUM = "medium"
 ATTR_NAME = "name"
 ATTR_RECEIVER_ENTITY_ID = "receiver_entity_id"
 ATTR_TRANSMITTER_ENTITY_ID = "transmitter_entity_id"

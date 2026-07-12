@@ -4,8 +4,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Home Assistant integration to learn, store and replay remote control signals through the
-built-in [`infrared`](https://www.home-assistant.io/integrations/infrared/)
-integration.
+built-in [`infrared`](https://www.home-assistant.io/integrations/infrared/) integration,
+with optional support for
+[`radio_frequency`](https://www.home-assistant.io/integrations/radio_frequency/)
+transmitters (e.g. 433 MHz OOK devices) on top of the same learned-signal storage.
 
 - **Output signals** become `button` entities and send learned codes.
 - **Input signals** become pulsing `binary_sensor` entities when a matching code
@@ -31,10 +33,15 @@ Every signal (learned manually or imported from IRDB) has a direction:
 - An **ESPHome** device (or other hardware) that exposes an **infrared emitter**
   entity in Home Assistant
 - An **infrared receiver** entity is optional, but required for learning signals and
-  input/binary-sensor features
+  input/binary-sensor features — this applies to RF devices too, since learning always
+  captures raw timings through an infrared receiver
 - Home Assistant's built-in [**Infrared**](https://www.home-assistant.io/integrations/infrared/)
   integration — SHYS Remote builds on top of it and does not talk to GPIO hardware
   directly
+- Optional, for RF devices: Home Assistant **2026.5** or newer for the built-in
+  [**Radio Frequency**](https://www.home-assistant.io/integrations/radio_frequency/)
+  integration, plus a compatible RF adapter (e.g. ESPHome or Broadlink) exposing a
+  radio-frequency transmitter entity
 
 ### How the pieces connect
 
@@ -48,10 +55,14 @@ ESPHome: infrared (ir_rf_proxy)  →  HA entities (receiver + emitter)
 SHYS Remote  →  learn, send and match signals per logical device
 ```
 
-When you add a device in SHYS Remote, you pick one **infrared emitter** and optionally an
-**infrared receiver** from Home Assistant. The emitter must exist before setup — usually
-from an ESPHome node that uses the
-[`ir_rf_proxy`](https://esphome.io/components/ir_rf_proxy/) platform.
+When you add a device in SHYS Remote, you first choose the **signal medium** —
+**infrared** or **radio frequency** — then pick one matching **transmitter** and
+optionally an **infrared receiver** from Home Assistant. The transmitter must exist
+before setup — for infrared, usually from an ESPHome node that uses the
+[`ir_rf_proxy`](https://esphome.io/components/ir_rf_proxy/) platform; for RF, from
+whatever adapter exposes an entity through Home Assistant's **Radio Frequency**
+integration. The receiver is always an infrared receiver, even for RF devices, since
+learning captures raw timings the same way regardless of medium.
 
 ## ESPHome reference setup
 
@@ -113,6 +124,30 @@ Infrared integration**, not through that action.
 You also need the usual ESPHome building blocks (`esphome:`, `esp32:`, `api:`, `wifi:`,
 `ota:`, …) — see the [ESPHome getting started guide](https://esphome.io/guides/getting_started_hassio/).
 
+## RF (radio-frequency) devices
+
+RF support (e.g. 433 MHz OOK devices) reuses the same learn/store/send flow as infrared,
+just through a different transmitter backend.
+
+- Requires Home Assistant's built-in
+  [**Radio Frequency**](https://www.home-assistant.io/integrations/radio_frequency/)
+  integration (added in HA 2026.5) and a compatible RF adapter/proxy exposing a
+  transmitter entity — see that integration's docs for supported hardware.
+- When adding or editing a device, set **Signal medium** to **Radio frequency**, then
+  pick the RF transmitter entity. The transmitter picker only lists entities Home
+  Assistant currently knows as infrared or RF emitters.
+- The **receiver** is unaffected: learning still goes through an infrared receiver, since
+  raw timings are captured the same way for both media.
+- SHYS Remote's `shys_remote.send` service and buttons work the same for RF signals; only
+  the underlying transmit call differs (`radio_frequency.async_send_command` instead of
+  `infrared.async_send_command`).
+
+RF and infrared devices coexist freely — the medium is a per-device setting, not a global
+integration option.
+
+Flipper-IRDB only contains infrared codes, so use **manual learning** (not IRDB import)
+for RF devices.
+
 ## Installation
 
 ### HACS (recommended after repository publish)
@@ -131,8 +166,10 @@ Copy `custom_components/shys_remote` into your Home Assistant
 1. Open **Settings → Devices & services → Add integration**.
 2. Search for **SHYS Remote** and complete the setup wizard.
 3. Open the integration card and choose **Add device**.
-4. Enter a device name, select your `infrared` transmitter (receiver optional), and pick
-   how to populate signals (manual or IR database).
+4. Enter a device name, choose the **signal medium** (infrared or radio frequency),
+   select your transmitter (receiver optional), and pick how to populate signals
+   (manual, or Flipper-IRDB import — the bundled database only contains infrared
+   codes, so use manual learning for RF devices).
 
 <p align="center">
   <img src="assets/add_device.png" alt="Add device — name, receiver, transmitter and signal source" width="480">
@@ -273,12 +310,14 @@ Flipper-IRDB data: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
 # SHYS Remote (Deutsch)
 
 Home-Assistant-Integration zum Anlernen, Speichern und Senden von
-Fernbedienungssignalen über die eingebaute `infrared`-Integration.
+Fernbedienungssignalen über die eingebaute `infrared`-Integration, optional auch über
+[`radio_frequency`](https://www.home-assistant.io/integrations/radio_frequency/)
+(z. B. 433-MHz-OOK-Geräte) auf Basis derselben Signal-Speicherung.
 
 - **Output:** Buttons zum Senden
 - **Input:** Binärsensoren bei erkanntem Signal
 - **Beides:** Button und Binärsensor für dasselbe Signal
-- **Flipper-IRDB:** Lokale Suche und Import beim Gerät anlegen
+- **Flipper-IRDB:** Lokale Suche und Import beim Gerät anlegen (nur Infrarot-Codes)
 
 ### Signalrichtung
 
@@ -297,10 +336,22 @@ bereitstellt. Ein Empfänger ist optional, aber für Input/Binärsensoren und An
 
 Kurz: `remote_receiver` + `remote_transmitter` in ESPHome, darüber je eine Instanz
 [`infrared` / `ir_rf_proxy`](https://esphome.io/components/ir_rf_proxy/) — dann das
-ESPHome-Gerät in HA einbinden. Beim Anlegen eines SHYS-Remote-Geräts wählst du
-die Transmitter-Entität und optional eine Empfänger-Entität aus.
+ESPHome-Gerät in HA einbinden. Beim Anlegen eines SHYS-Remote-Geräts wählst du zuerst
+das **Signal-Medium** (Infrarot oder Funk), dann die passende Transmitter-Entität und
+optional eine Empfänger-Entität aus.
 
 Ausführliches Beispiel mit YAML und Links: Abschnitt **ESPHome reference setup** oben.
+
+### Funk (RF)
+
+Für RF-Geräte (z. B. 433-MHz-OOK) brauchst du Home Assistant **2026.5+** mit der
+eingebauten [**Radio Frequency**](https://www.home-assistant.io/integrations/radio_frequency/)
+Integration sowie einen kompatiblen RF-Adapter, der eine Transmitter-Entität
+bereitstellt. Der Empfänger bleibt auch bei RF-Geräten ein Infrared-Empfänger, da das
+Anlernen unabhängig vom Medium über dieselben Roh-Timings läuft. Da Flipper-IRDB nur
+Infrarot-Codes enthält, lerne RF-Signale manuell an statt sie zu importieren.
+
+Details und Links: Abschnitt **RF (radio-frequency) devices** oben.
 
 ### Geräteoptionen
 
@@ -316,8 +367,8 @@ Manche Geräte (z. B. Sony-TVs mit SIRC) reagieren erst zuverlässig bei mehrere
 ### Kurzstart
 
 1. Integration **SHYS Remote** hinzufügen
-2. Unter der Integration **Gerät hinzufügen** — Name, optional Empfänger, Transmitter und
-   Signalquelle wählen (siehe Screenshot oben)
+2. Unter der Integration **Gerät hinzufügen** — Name, Signal-Medium (Infrarot/Funk),
+   optional Empfänger, Transmitter und Signalquelle wählen (siehe Screenshot oben)
 3. **Flipper-IRDB:** Datenbank durchsuchen, Fernbedienung wählen, im
    Bestätigungsschritt die Richtung festlegen (`output`, `input` oder `both`) →
    Signale werden importiert (ohne Empfänger nur `output`)

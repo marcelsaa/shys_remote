@@ -18,6 +18,7 @@ from homeassistant.util import slugify
 
 from .const import (
     ATTR_DIRECTION,
+    ATTR_MEDIUM,
     ATTR_NAME,
     ATTR_RECEIVER_ENTITY_ID,
     ATTR_TIMEOUT,
@@ -60,6 +61,7 @@ from .const import (
 from .irdb import IrdbClient
 from .remote import async_delete_command, async_learn_command
 from .manager import RemoteManager
+from .signal_transport import SIGNAL_MEDIUM_IR, SIGNAL_MEDIUM_RF
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,37 +113,43 @@ def _send_options_from_input(user_input: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _device_edit_schema() -> vol.Schema:
+def _medium_schema_field() -> dict:
+    """Return the schema field for signal medium selection."""
+    return {
+        vol.Optional(ATTR_MEDIUM, default=SIGNAL_MEDIUM_IR): selector.SelectSelector(
+            selector.SelectSelectorConfig(
+                options=[SIGNAL_MEDIUM_IR, SIGNAL_MEDIUM_RF],
+                mode=selector.SelectSelectorMode.DROPDOWN,
+            )
+        ),
+    }
+
+
+def _transport_entity_schema_fields(hass) -> dict:
+    """Return schema fields for receiver/transmitter entities known to the transports."""
+    return {
+        vol.Optional(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
+            selector.EntitySelectorConfig(include_entities=_receiver_entity_ids(hass))
+        ),
+        vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
+            selector.EntitySelectorConfig(include_entities=_transmitter_entity_ids(hass))
+        ),
+    }
+
+
+def _device_edit_schema(hass) -> vol.Schema:
     """Return the schema for editing an existing device."""
     return vol.Schema(
         {
             vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
-            vol.Optional(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    filter=[
-                        selector.EntityFilterSelectorConfig(
-                            domain="infrared",
-                            device_class="receiver",
-                        )
-                    ]
-                )
-            ),
-            vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    filter=[
-                        selector.EntityFilterSelectorConfig(
-                            domain="infrared",
-                            device_class="emitter",
-                        )
-                    ]
-                )
-            ),
+            **_medium_schema_field(),
+            **_transport_entity_schema_fields(hass),
             **_device_send_schema_fields(),
         }
     )
 
 
-def _device_schema(*, include_manual_source: bool = True) -> vol.Schema:
+def _device_schema(hass, *, include_manual_source: bool = True) -> vol.Schema:
     """Return the schema for remote device subentries."""
     source_options = [SOURCE_IRDB]
     if include_manual_source:
@@ -150,26 +158,8 @@ def _device_schema(*, include_manual_source: bool = True) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_DEVICE_NAME): selector.TextSelector(),
-            vol.Optional(ATTR_RECEIVER_ENTITY_ID): selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    filter=[
-                        selector.EntityFilterSelectorConfig(
-                            domain="infrared",
-                            device_class="receiver",
-                        )
-                    ]
-                )
-            ),
-            vol.Required(ATTR_TRANSMITTER_ENTITY_ID): selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    filter=[
-                        selector.EntityFilterSelectorConfig(
-                            domain="infrared",
-                            device_class="emitter",
-                        )
-                    ]
-                )
-            ),
+            **_medium_schema_field(),
+            **_transport_entity_schema_fields(hass),
             vol.Required(CONF_SIGNAL_SOURCE, default=SOURCE_MANUAL): selector.SelectSelector(
                 selector.SelectSelectorConfig(
                     options=source_options,
@@ -250,12 +240,43 @@ def _options_schema() -> vol.Schema:
     )
 
 
-def _validate_infrared_entities(
-    hass, receiver: str | None, transmitter: str
+def _radio_frequency_emitters(hass) -> list[str]:
+    """Return known radio-frequency emitter entities, if that backend is loaded."""
+    try:
+        from homeassistant.components import radio_frequency
+    except ImportError:
+        return []
+    return list(radio_frequency.async_get_emitters(hass))
+
+
+def _receiver_entity_ids(hass) -> list[str]:
+    """Return known infrared receiver entities.
+
+    Learning always captures raw timings through an infrared receiver, even for
+    RF devices, so the receiver candidates are the same for both media.
+    """
+    return sorted(infrared.async_get_receivers(hass))
+
+
+def _transmitter_entity_ids(hass) -> list[str]:
+    """Return known transmitter entities for both infrared and RF backends."""
+    entities = set(infrared.async_get_emitters(hass))
+    entities.update(_radio_frequency_emitters(hass))
+    return sorted(entities)
+
+
+def _validate_transport_entities(
+    hass, receiver: str | None, transmitter: str, medium: str
 ) -> str | None:
-    """Validate receiver and transmitter entities."""
+    """Validate receiver and transmitter entities for the selected medium."""
     if receiver and receiver not in infrared.async_get_receivers(hass):
         return "invalid_receiver"
+
+    if medium == SIGNAL_MEDIUM_RF:
+        if transmitter not in _radio_frequency_emitters(hass):
+            return "invalid_emitter"
+        return None
+
     if transmitter not in infrared.async_get_emitters(hass):
         return "invalid_emitter"
     return None
@@ -379,6 +400,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         receiver = _normalize_entity_id(user_input.get(ATTR_RECEIVER_ENTITY_ID))
         self.context[CTX_IRDB_PENDING] = {
             CONF_DEVICE_NAME: user_input[CONF_DEVICE_NAME],
+            ATTR_MEDIUM: user_input.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR),
             ATTR_RECEIVER_ENTITY_ID: receiver,
             ATTR_TRANSMITTER_ENTITY_ID: _normalize_entity_id(
                 user_input[ATTR_TRANSMITTER_ENTITY_ID]
@@ -569,6 +591,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         receiver: str | None,
         transmitter: str,
         *,
+        medium: str = SIGNAL_MEDIUM_IR,
         send_options: dict[str, int] | None = None,
         irdb_path: str | None = None,
         irdb_direction: str | None = None,
@@ -579,6 +602,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             CONF_SEND_REPEAT_DELAY_MS: DEFAULT_SEND_REPEAT_DELAY_MS,
         }
         data: dict[str, str | int] = {
+            ATTR_MEDIUM: medium,
             ATTR_TRANSMITTER_ENTITY_ID: transmitter,
             CONF_SEND_REPEAT_COUNT: send_settings[CONF_SEND_REPEAT_COUNT],
             CONF_SEND_REPEAT_DELAY_MS: send_settings[CONF_SEND_REPEAT_DELAY_MS],
@@ -611,12 +635,13 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         transmitter = _normalize_entity_id(
             pending_device.get(ATTR_TRANSMITTER_ENTITY_ID)
         )
+        medium = str(pending_device.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) or SIGNAL_MEDIUM_IR)
 
         if not device_name or not slugify(device_name):
             errors["base"] = "invalid_device_name"
         elif (
-            error := _validate_infrared_entities(
-                self.hass, receiver_value, transmitter
+            error := _validate_transport_entities(
+                self.hass, receiver_value, transmitter, medium
             )
         ):
             errors["base"] = error
@@ -637,6 +662,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                             device_name,
                             receiver_value,
                             transmitter,
+                            medium=medium,
                             send_options=_send_options_from_input(pending_device),
                             irdb_path=irdb_path,
                             irdb_direction=irdb_direction,
@@ -660,6 +686,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             receiver = _normalize_entity_id(user_input.get(ATTR_RECEIVER_ENTITY_ID))
             receiver_value = receiver or None
             transmitter = _normalize_entity_id(user_input[ATTR_TRANSMITTER_ENTITY_ID])
+            medium = str(user_input.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) or SIGNAL_MEDIUM_IR)
             signal_source = user_input.get(CONF_SIGNAL_SOURCE, SOURCE_MANUAL)
 
             if not device_name:
@@ -667,8 +694,8 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             elif receiver_value is None and signal_source == SOURCE_MANUAL:
                 errors[CONF_SIGNAL_SOURCE] = "manual_requires_receiver"
             elif (
-                error := _validate_infrared_entities(
-                    self.hass, receiver_value, transmitter
+                error := _validate_transport_entities(
+                    self.hass, receiver_value, transmitter, medium
                 )
             ):
                 errors["base"] = error
@@ -687,10 +714,12 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                         device_name,
                         receiver_value,
                         transmitter,
+                        medium=medium,
                         send_options=_send_options_from_input(user_input),
                     )
 
         schema = _device_schema(
+            self.hass,
             include_manual_source=not (
                 user_input is not None
                 and not _normalize_entity_id(user_input.get(ATTR_RECEIVER_ENTITY_ID))
@@ -790,6 +819,8 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
 
         if user_input is not None:
             selected_path = user_input.get(CONF_IRDB_REMOTE)
+            if not isinstance(selected_path, str):
+                selected_path = ""
             if selected_path == IRDB_SEARCH_AGAIN:
                 self._clear_flow_search_results()
                 return await self.async_step_irdb_search()
@@ -944,12 +975,16 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             transmitter = _normalize_entity_id(
                 user_input[ATTR_TRANSMITTER_ENTITY_ID]
             )
+            medium = str(
+                user_input.get(ATTR_MEDIUM, subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR))
+                or SIGNAL_MEDIUM_IR
+            )
 
             if not device_name:
                 errors["base"] = "invalid_device_name"
             elif (
-                error := _validate_infrared_entities(
-                    self.hass, receiver_value, transmitter
+                error := _validate_transport_entities(
+                    self.hass, receiver_value, transmitter, medium
                 )
             ):
                 errors["base"] = error
@@ -965,6 +1000,7 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                         break
                 else:
                     device_data: dict[str, str | int] = {
+                        ATTR_MEDIUM: medium,
                         ATTR_TRANSMITTER_ENTITY_ID: transmitter,
                         **_send_options_from_input(user_input),
                     }
@@ -980,9 +1016,10 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         return self.async_show_form(
             step_id="edit_device",
             data_schema=self.add_suggested_values_to_schema(
-                _device_edit_schema(),
+                _device_edit_schema(self.hass),
                 {
                     CONF_DEVICE_NAME: subentry.title,
+                    ATTR_MEDIUM: subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR),
                     ATTR_RECEIVER_ENTITY_ID: subentry.data.get(
                         ATTR_RECEIVER_ENTITY_ID
                     ),

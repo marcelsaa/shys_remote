@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "SHYS Remote",
-        "description": "Diese Integration speichert angelernte Fernbedienungssignale und reagiert auf eingehende Signale über infrared Empfänger und Transmitter.\n\nNach dem Einrichten kannst du Geräte hinzufügen und Signale anlernen. Output-Signale werden per Button gesendet, Input-Signale lösen Binary Sensoren aus."
+        "description": "Diese Integration speichert angelernte Fernbedienungssignale und reagiert auf eingehende Signale über Infrared-Empfänger und Infrared- oder Funk-Transmitter.\n\nNach dem Einrichten kannst du Geräte hinzufügen und Signale anlernen. Output-Signale werden per Button gesendet, Input-Signale lösen Binary Sensoren aus."
       }
     },
     "abort": {
@@ -39,19 +39,21 @@
       "step": {
         "user": {
           "title": "Gerät hinzufügen",
-          "description": "Lege ein Gerät an und wähle den passenden infrared Transmitter. Der Empfänger ist optional.\n\nOhne Empfänger sind nur Output-Signale möglich; Input/Binary-Sensoren und Anlernen sind deaktiviert.",
+          "description": "Lege ein Gerät an und wähle den passenden Transmitter. Der Empfänger ist optional.\n\nOhne Empfänger sind nur Output-Signale möglich; Input/Binary-Sensoren und Anlernen sind deaktiviert.",
           "data": {
             "device_name": "Gerätename",
-            "receiver_entity_id": "Infrared Empfänger",
-            "transmitter_entity_id": "Infrared Transmitter",
+            "medium": "Signal-Medium",
+            "receiver_entity_id": "Empfänger",
+            "transmitter_entity_id": "Transmitter",
             "signal_source": "Signale",
             "send_repeat_count": "Sendewiederholungen",
             "send_repeat_delay_ms": "Pause zwischen Wiederholungen"
           },
           "data_description": {
             "device_name": "Name des logischen Geräts in Home Assistant, z. B. TV oder AV-Empfänger.",
-            "receiver_entity_id": "Optionaler Infrared Empfänger zum Anlernen und für Input-Signale. Leer lassen, wenn du nur senden möchtest.",
-            "transmitter_entity_id": "Infrared Transmitter zum Senden von Output-Signalen.",
+            "medium": "Signalübertragung für dieses Gerät wählen: Infrared für bestehende IR-Workflows, Funk für RF-Transmitter.",
+            "receiver_entity_id": "Optionaler Empfänger zum Anlernen und für Input-Signale. Leer lassen, wenn du nur senden möchtest.",
+            "transmitter_entity_id": "Transmitter zum Senden von Output-Signalen.",
             "signal_source": "Signale später manuell anlernen oder beim Anlegen Tasten aus der mitgelieferten Flipper-IRDB importieren.",
             "send_repeat_count": "Wie oft jedes Signal beim Senden hintereinander gesendet wird.",
             "send_repeat_delay_ms": "Wartezeit zwischen den einzelnen Sendewiederholungen."
@@ -60,6 +62,10 @@
             "signal_source": {
               "manual": "Später manuell anlernen",
               "irdb": "Aus IR-Datenbank importieren"
+            },
+            "medium": {
+              "ir": "Infrarot",
+              "rf": "Funk (RF)"
             }
           }
         },
@@ -124,18 +130,20 @@
         },
         "edit_device": {
           "title": "Gerät bearbeiten",
-          "description": "Name oder infrared Hardware für {device} ändern.\n\nHinweis: Ohne Empfänger sind Anlernen sowie Input/Binary-Sensoren nicht möglich.",
+          "description": "Name oder Hardware für {device} ändern.\n\nHinweis: Ohne Empfänger sind Anlernen sowie Input/Binary-Sensoren nicht möglich.",
           "data": {
             "device_name": "Gerätename",
-            "receiver_entity_id": "Infrared Empfänger",
-            "transmitter_entity_id": "Infrared Transmitter",
+            "medium": "Signal-Medium",
+            "receiver_entity_id": "Empfänger",
+            "transmitter_entity_id": "Transmitter",
             "send_repeat_count": "Sendewiederholungen",
             "send_repeat_delay_ms": "Pause zwischen Wiederholungen"
           },
           "data_description": {
             "device_name": "Anzeigename dieses Geräts in Home Assistant.",
-            "receiver_entity_id": "Optionaler Infrared Empfänger zum Anlernen und für Input-Signale.",
-            "transmitter_entity_id": "Infrared Transmitter zum Senden von Output-Signalen.",
+            "medium": "Übertragungsart für dieses Gerät wählen: Infrarot oder Funk (RF).",
+            "receiver_entity_id": "Optionaler Empfänger zum Anlernen und für Input-Signale.",
+            "transmitter_entity_id": "Transmitter zum Senden von Output-Signalen.",
             "send_repeat_count": "Wie oft jedes Signal beim Senden hintereinander gesendet wird.",
             "send_repeat_delay_ms": "Wartezeit zwischen den einzelnen Sendewiederholungen."
           }
@@ -181,7 +189,7 @@
         "invalid_signal_name": "Bitte einen gültigen Signalnamen angeben (Buchstaben, Zahlen, Unterstrich).",
         "invalid_receiver": "Der gewählte Empfänger ist keine gültige infrared Empfänger-Entität.",
         "manual_requires_receiver": "Ohne Empfänger ist \"Später manuell anlernen\" nicht möglich. Nutze stattdessen den IR-Datenbank-Import oder wähle einen Empfänger.",
-        "invalid_emitter": "Der gewählte Transmitter ist keine gültige infrared Emitter-Entität.",
+        "invalid_emitter": "Der gewählte Transmitter ist für das gewählte Signal-Medium ungültig.",
         "device_already_exists": "Ein Gerät mit diesem Namen existiert bereits.",
         "command_already_exists": "Dieses Signal existiert auf dem Gerät bereits.",
         "learn_timeout": "Innerhalb der Wartezeit wurde kein Signal empfangen.",
@@ -230,7 +238,7 @@
         },
         "transmitter_entity_id": {
           "name": "Sender",
-          "description": "Optionaler Override für den Standard-infrared-Sender des Geräts."
+          "description": "Optionaler Override für den Standard-Sender des Geräts."
         },
         "timeout": {
           "name": "Timeout",
@@ -284,7 +292,7 @@
       "message": "Entität '{entity_id}' ist kein infrared Empfänger."
     },
     "invalid_emitter": {
-      "message": "Entität '{entity_id}' ist kein infrared Transmitter."
+      "message": "Entität '{entity_id}' ist für das gewählte Signal-Medium kein gültiger Transmitter."
     },
     "receiver_required": {
       "message": "Für dieses Gerät ist kein Infrared Empfänger konfiguriert."
