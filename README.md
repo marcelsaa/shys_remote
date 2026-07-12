@@ -136,8 +136,6 @@ just through a different transmitter backend.
 - When adding or editing a device, set **Signal medium** to **Radio frequency**, then
   pick the RF transmitter entity. The transmitter picker only lists entities Home
   Assistant currently knows as infrared or RF emitters.
-- The **receiver** is unaffected: learning still goes through an infrared receiver, since
-  raw timings are captured the same way for both media.
 - SHYS Remote's `shys_remote.send` service and buttons work the same for RF signals; only
   the underlying transmit call differs (`radio_frequency.async_send_command` instead of
   `infrared.async_send_command`).
@@ -147,6 +145,75 @@ integration option.
 
 Flipper-IRDB only contains infrared codes, so use **manual learning** (not IRDB import)
 for RF devices.
+
+### Learning RF signals (receiver workaround)
+
+The **receiver** picker only ever lists infrared receiver entities, for RF devices too.
+This is intentional, not a bug: as of Home Assistant Core 2026.7.2, the built-in
+`radio_frequency` integration only creates *transmitter* entities. Home Assistant's
+`esphome` integration filters incoming entities by their capability bits
+(`homeassistant/components/esphome/radio_frequency.py`) and only keeps ones that
+advertise transmit support — a receive-only RF proxy is silently dropped and never
+becomes a Home Assistant entity, however correctly your ESPHome device announces it.
+This is a current gap in Home Assistant Core, not something SHYS Remote can work around
+in code, and may change once Home Assistant ships a native RF receiver entity.
+
+Until then, learn RF signals through a receiver exposed via the **infrared** platform
+instead — raw pulse/space timings are protocol-agnostic there, so an `ir_rf_proxy`
+instance wired to your RF receiver hardware works for capturing RF codes even though
+Home Assistant sees it as an infrared entity. For example, on a KinCony KC868-AG with
+separate IR and RF receiver/transmitter pins:
+
+```yaml
+remote_receiver:
+  - id: ir_rx
+    pin:
+      number: GPIO23
+      inverted: true
+    dump: raw
+  - id: rf_rx
+    pin: GPIO13
+    dump: raw
+
+remote_transmitter:
+  - id: ir_tx
+    pin: GPIO2
+    carrier_duty_percent: 50%
+    non_blocking: true
+  - id: rf_tx
+    pin: GPIO22
+    carrier_duty_percent: 100%
+    non_blocking: true
+
+infrared:
+  - platform: ir_rf_proxy
+    name: IR Proxy Receiver
+    receiver_frequency: 38kHz
+    remote_receiver_id: ir_rx
+  - platform: ir_rf_proxy
+    name: IR Proxy Transmitter
+    remote_transmitter_id: ir_tx
+  - platform: ir_rf_proxy
+    name: RF Learning Receiver
+    remote_receiver_id: rf_rx
+
+radio_frequency:
+  - platform: ir_rf_proxy
+    name: RF Proxy Transmitter
+    frequency: 433.92MHz
+    remote_transmitter_id: rf_tx
+```
+
+Notes on this config:
+
+- `RF Learning Receiver` deliberately has no `receiver_frequency` — that field is IR
+  demodulation metadata only (no hardware effect) and doesn't apply to raw RF capture.
+- There is no native `radio_frequency:` receiver block for `rf_rx`. Home Assistant
+  wouldn't create an entity for it anyway (see above), so it would just be dead
+  configuration.
+- In SHYS Remote, pick `RF Learning Receiver` as the **Receiver** and `RF Proxy
+  Transmitter` as the **Transmitter** for an RF device — both are needed for `input`/
+  `both` direction signals; output-only RF devices only need the transmitter.
 
 ## Installation
 
@@ -347,11 +414,19 @@ Ausführliches Beispiel mit YAML und Links: Abschnitt **ESPHome reference setup*
 Für RF-Geräte (z. B. 433-MHz-OOK) brauchst du Home Assistant **2026.5+** mit der
 eingebauten [**Radio Frequency**](https://www.home-assistant.io/integrations/radio_frequency/)
 Integration sowie einen kompatiblen RF-Adapter, der eine Transmitter-Entität
-bereitstellt. Der Empfänger bleibt auch bei RF-Geräten ein Infrared-Empfänger, da das
-Anlernen unabhängig vom Medium über dieselben Roh-Timings läuft. Da Flipper-IRDB nur
-Infrarot-Codes enthält, lerne RF-Signale manuell an statt sie zu importieren.
+bereitstellt. Da Flipper-IRDB nur Infrarot-Codes enthält, lerne RF-Signale manuell an
+statt sie zu importieren.
 
-Details und Links: Abschnitt **RF (radio-frequency) devices** oben.
+Der **Empfänger** bleibt auch bei RF-Geräten ein Infrared-Empfänger — das ist bewusst so,
+kein Bug: Home Assistants `radio_frequency`-Integration erzeugt (Stand HA Core 2026.7.2)
+ausschließlich Transmitter-Entities. Reine RF-Empfänger werden von der
+`esphome`-Integration anhand des fehlenden `TRANSMITTER`-Capability-Bits
+herausgefiltert und erscheinen dadurch nie als Home-Assistant-Entity — unabhängig davon,
+wie korrekt dein ESPHome-Gerät sie meldet. Bis Home Assistant das nativ unterstützt,
+lernst du RF-Signale stattdessen über eine zusätzlich als `infrared` eingebundene
+Proxy-Receiver-Entity an, da rohe Puls-/Pause-Timings dort protokollunabhängig sind.
+Konkretes ESPHome-Beispiel (KinCony KC868-AG) und Details: Abschnitt **Learning RF
+signals (receiver workaround)** oben.
 
 ### Geräteoptionen
 

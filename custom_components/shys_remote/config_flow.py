@@ -290,8 +290,27 @@ def _radio_frequency_transmitters(hass, rf_frequency: int) -> list[str]:
 def _receiver_entity_ids(hass) -> list[str]:
     """Return known infrared receiver entities.
 
-    Learning always captures raw timings through an infrared receiver, even for
-    RF devices, so the receiver candidates are the same for both media.
+    This is intentionally the same list for both media, not a placeholder that
+    still needs an RF-specific counterpart: as of Home Assistant Core 2026.7.2,
+    the radio_frequency integration only ever creates transmitter entities.
+    Home Assistant's esphome integration filters incoming RF entities by their
+    capability bits (homeassistant/components/esphome/radio_frequency.py,
+    ``info_filter=lambda info: bool(info.capabilities &
+    RadioFrequencyCapability.TRANSMITTER)``), so a receiver-only RF proxy is
+    silently dropped and never becomes a Home Assistant entity - there is no
+    ``radio_frequency`` receiver entity to look up here, confirmed against
+    homeassistant/components/radio_frequency/entity.py defining only
+    ``RadioFrequencyTransmitterEntity``.
+
+    Because of that gap, RF signals are learned through a receiver exposed via
+    the infrared platform instead (raw pulse/space timings are protocol-agnostic
+    there), typically a second `ir_rf_proxy` instance in ESPHome wired to the
+    same RF receiver hardware and declared under `infrared:` rather than
+    `radio_frequency:` (see the README for a worked example). This is a
+    documented compatibility workaround for the current state of Home
+    Assistant Core, not a guaranteed or final architecture - once Home
+    Assistant ships a native radio_frequency receiver entity, this should be
+    revisited.
     """
     return sorted(infrared.async_get_receivers(hass))
 
@@ -311,6 +330,7 @@ def _validate_transport_entities(
     rf_frequency: int = DEFAULT_RF_FREQUENCY,
 ) -> str | None:
     """Validate receiver and transmitter entities for the selected medium."""
+    # Receiver validation is medium-independent by design - see _receiver_entity_ids().
     if receiver and receiver not in infrared.async_get_receivers(hass):
         return "invalid_receiver"
 

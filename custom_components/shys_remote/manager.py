@@ -38,7 +38,6 @@ from .const import (
 from .signal_matching import signal_matches
 from .signal_transport import (
     RawSignalCommand,
-    SIGNAL_BACKEND_HOMEASSISTANT_INFRARED,
     SIGNAL_BACKEND_HOMEASSISTANT_RADIO_FREQUENCY,
     SIGNAL_MEDIUM_RF,
     get_signal_backend,
