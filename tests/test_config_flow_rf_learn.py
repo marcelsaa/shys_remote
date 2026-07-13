@@ -5,11 +5,25 @@ helper functions, since ConfigSubentryFlow is stubbed as an empty class in
 this dev environment - see its docstring), these tests call
 DeviceSubentryFlowHandler's async_step_learn_command/
 async_step_learn_command_confirm directly as unbound functions
-(``DeviceSubentryFlowHandler._async_step_learn_command(fake, ...)``) against
+(``DeviceSubentryFlowHandler.async_step_learn_command(fake, ...)``) against
 a minimal duck-typed double that implements just the FlowHandler surface
 those methods actually use: ``context``, ``async_show_form`` and
 ``async_abort``. That's enough to verify the real step logic without
 needing Home Assistant's real data_entry_flow runtime.
+
+Tests call the *public* async_step_learn_command/async_step_learn_command_confirm
+(not the inner _async_step_learn_command*/impl methods) on purpose: an
+earlier version of this file called the inner methods directly, and its
+``_FakeFlow`` double implemented a ``_set_confirm_only()`` stub "helpfully"
+so the tests would pass - except _set_confirm_only() only exists on
+homeassistant.config_entries.ConfigFlow, not on ConfigSubentryFlow (verified
+against the real HA core source), so the real code crashed with
+AttributeError on every real subentry flow while these tests stayed green.
+Going through the public wrapper (which is a thin try/except around the
+inner implementation - see async_step_learn_command's docstring) and *not*
+inventing methods on the fake that don't exist on the real base class is
+what would have caught that. Don't add methods to _FakeFlow beyond what
+ConfigSubentryFlow actually provides.
 
 RF learning used to be driven by Home Assistant's show_progress/
 progress_task mechanism (to show "press now" / "press again" screens in
@@ -17,12 +31,12 @@ between the two required captures), but that turned out to be unreliable
 for a *second* consecutive progress step within one flow
 (home-assistant/core#95749: the flow gets re-entered - and the
 still-pending task's result read - before that second task has actually
-finished listening, so it fails immediately without ever really waiting,
-and the progress description text never renders either). It was replaced
-with two plain form-based steps: async_step_learn_command blocks
-synchronously on the first capture and, on success, shows a confirmation
-form; async_step_learn_command_confirm blocks on the second once that form
-is submitted. These tests cover both steps and the handoff between them.
+finished listening, so it fails immediately without ever really waiting).
+It was replaced with two plain form-based steps: async_step_learn_command
+blocks synchronously on the first capture and, on success, shows a
+confirmation form; async_step_learn_command_confirm blocks on the second
+once that form is submitted. These tests cover both steps and the handoff
+between them.
 """
 
 from __future__ import annotations
@@ -42,16 +56,22 @@ class _FakeFlow:
 
     _learn_command_form is bound from the real DeviceSubentryFlowHandler
     class (not reimplemented here), so these tests exercise the actual
-    production code for it too.
+    production code for it too. Only implement methods here that really
+    exist on ConfigSubentryFlow - see the module docstring for why.
     """
 
     def __init__(self, manager: RemoteManager) -> None:
         self.context: dict = {}
         self.hass = object()
         self._manager = manager
-        self._learn_command_form = types.MethodType(
-            DeviceSubentryFlowHandler._learn_command_form, self
-        )
+        for name in (
+            "_learn_command_form",
+            "_async_step_learn_command",
+            "_async_step_learn_command_confirm",
+        ):
+            setattr(
+                self, name, types.MethodType(getattr(DeviceSubentryFlowHandler, name), self)
+            )
 
     def async_show_form(self, *, step_id, data_schema=None, description_placeholders=None, errors=None):
         return {
@@ -67,13 +87,6 @@ class _FakeFlow:
             "reason": reason,
             "description_placeholders": description_placeholders,
         }
-
-    def _set_confirm_only(self) -> None:
-        # Real signature per homeassistant.config_entries.ConfigFlow -
-        # not available on the empty ConfigSubentryFlow stub used in this
-        # dev environment (see conftest.py), so reimplemented here rather
-        # than bound from the real class.
-        self.context["confirm_only"] = True
 
     def _get_reconfigure_subentry(self):
         return self._subentry
@@ -149,7 +162,7 @@ def test_learn_command_rf_first_capture_shows_confirm_step(monkeypatch) -> None:
     flow = _flow(_rf_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command(
+        DeviceSubentryFlowHandler.async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -162,9 +175,6 @@ def test_learn_command_rf_first_capture_shows_confirm_step(monkeypatch) -> None:
         "direction": "output",
     }
     assert flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] == [350, -1050, 350, -350]
-    # A zero-field vol.Schema({}) form didn't reliably render its
-    # description text in the frontend - confirm_only is the fix.
-    assert flow.context["confirm_only"] is True
 
 
 def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None:
@@ -181,7 +191,7 @@ def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None
     flow = _flow(_rf_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command(
+        DeviceSubentryFlowHandler.async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -190,7 +200,6 @@ def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None
     assert result["step_id"] == "learn_command"
     assert result["errors"]
     assert config_flow.CTX_RF_LEARN_INPUT not in flow.context
-    assert "confirm_only" not in flow.context
 
 
 def test_learn_command_ir_unaffected(monkeypatch) -> None:
@@ -217,7 +226,7 @@ def test_learn_command_ir_unaffected(monkeypatch) -> None:
     flow = _flow(_ir_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command(
+        DeviceSubentryFlowHandler.async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -250,7 +259,7 @@ def test_learn_command_confirm_match_stores_and_aborts(monkeypatch) -> None:
     )
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
     )
 
     assert result == {
@@ -273,9 +282,6 @@ def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatc
         "direction": "output",
     }
     flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
-    # Simulates the flag the confirm step's own render would have set -
-    # must not leak into the real form we're falling back to here.
-    flow.context["confirm_only"] = True
 
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
@@ -283,12 +289,11 @@ def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatc
     )
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
     )
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command"
-    assert "confirm_only" not in flow.context
     assert result["errors"] == {"base": "rf_learn_inconsistent"}
 
 
@@ -298,7 +303,7 @@ def test_learn_command_confirm_without_prior_context_falls_back(monkeypatch) -> 
     flow = _flow(_rf_subentry(), _manager(), monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, None)
+        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
     )
 
     assert result["type"] == "form"
@@ -308,7 +313,9 @@ def test_learn_command_confirm_without_prior_context_falls_back(monkeypatch) -> 
 
 def test_learn_command_confirm_renders_form_before_submission(monkeypatch) -> None:
     """A GET-style render (user_input=None) must just show the confirm
-    form, not attempt a capture yet."""
+    form, not attempt a capture yet - and must not need any data_schema
+    or ConfigFlow-only helper (like _set_confirm_only, which doesn't exist
+    on ConfigSubentryFlow) to do so."""
     flow = _flow(_rf_subentry(), _manager(), monkeypatch)
     flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
         "name": "power",
@@ -318,12 +325,11 @@ def test_learn_command_confirm_renders_form_before_submission(monkeypatch) -> No
     flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
 
     result = _run(
-        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, None)
+        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
     )
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command_confirm"
-    assert flow.context["confirm_only"] is True
 
 
 def test_learn_command_wrapper_catches_unanticipated_exception(monkeypatch) -> None:
@@ -374,6 +380,22 @@ def test_learn_command_confirm_wrapper_catches_unanticipated_exception(monkeypat
         "reason": "learn_step_failed",
         "description_placeholders": None,
     }
+
+
+def test_delete_command_empty_does_not_use_set_confirm_only(monkeypatch) -> None:
+    """async_step_delete_command's "no signals" dead end had the exact same
+    _set_confirm_only() bug as the learn-confirm step (fixed alongside it,
+    same root cause) - it must render without needing that method."""
+    manager = _manager()
+    manager.commands = {"dev1": {}}
+    flow = _flow(_rf_subentry(), manager, monkeypatch)
+
+    result = _run(
+        DeviceSubentryFlowHandler.async_step_delete_command(flow, None)
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "delete_command_empty"
 
 
 def _run(coro):

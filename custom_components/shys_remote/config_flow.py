@@ -1172,11 +1172,6 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         """Return the learn-signal form, optionally showing an error."""
         self.context.pop(CTX_RF_LEARN_INPUT, None)
         self.context.pop(CTX_RF_LEARN_FIRST_TIMINGS, None)
-        # This form has real fields - undo any confirm_only flag left over
-        # from async_step_learn_command_confirm's zero-field step, which
-        # would otherwise make the frontend keep rendering this one without
-        # its fields too.
-        self.context.pop("confirm_only", None)
         return self.async_show_form(
             step_id="learn_command",
             data_schema=_learn_schema(include_input=bool(receiver_entity_id)),
@@ -1275,10 +1270,17 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                                 ATTR_DIRECTION: direction,
                             }
                             self.context[CTX_RF_LEARN_FIRST_TIMINGS] = first_timings
-                            # See async_step_learn_command_confirm for why
-                            # this is confirm_only rather than an explicit
-                            # empty schema.
-                            self._set_confirm_only()
+                            # No data_schema (equivalent to an empty one):
+                            # Home Assistant's step-flow-form frontend
+                            # component always renders the step description
+                            # regardless of whether there are fields, and
+                            # only renders <ha-form> at all when
+                            # data_schema is non-empty - so this alone is
+                            # enough for a description-only confirmation
+                            # form. _set_confirm_only() was tried here
+                            # before, but that method only exists on
+                            # ConfigFlow, not ConfigSubentryFlow, and
+                            # raised AttributeError on every use.
                             return self.async_show_form(
                                 step_id="learn_command_confirm",
                                 description_placeholders={
@@ -1381,13 +1383,8 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 description_placeholders={"name": signal_name, "device": subentry.title},
             )
 
-        # A zero-field vol.Schema({}) form doesn't reliably render its
-        # description text in the frontend - _set_confirm_only() (already
-        # used by async_step_delete_command for its "no signals" dead end)
-        # is the proven pattern in this file for a "just show text + a
-        # confirm button" step, so use it here too instead of an explicit
-        # empty schema.
-        self._set_confirm_only()
+        # No data_schema needed - see the matching comment in
+        # async_step_learn_command for why.
         return self.async_show_form(
             step_id="learn_command_confirm",
             description_placeholders={
@@ -1405,7 +1402,10 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         signals = list(manager.get_subentry_commands(subentry.subentry_id).keys())
 
         if not signals:
-            self._set_confirm_only()
+            # No data_schema needed - see the comment in
+            # async_step_learn_command for why (_set_confirm_only() only
+            # exists on ConfigFlow, not ConfigSubentryFlow, and raised
+            # AttributeError here too before this fix).
             return self.async_show_form(
                 step_id="delete_command_empty",
                 description_placeholders={"device": subentry.title},
