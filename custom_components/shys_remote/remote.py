@@ -101,6 +101,74 @@ async def async_wait_for_signal(
     return received["signal"]
 
 
+async def async_capture_rf_signal(
+    hass: HomeAssistant,
+    receiver: str,
+    timeout: int,
+) -> list[int]:
+    """Wait for one RF capture and return its raw timings.
+
+    Shared by the ``shys_remote.learn`` service path (async_learn_command,
+    which needs two of these back to back with no UI in between) and the
+    config flow's two-stage learn UI (which shows progress between calls).
+    Raises ServiceValidationError - "learn_timeout" via async_wait_for_signal,
+    or "empty_signal" here - either way, the caller doesn't need to know why
+    a capture failed to show a sensible error.
+    """
+    signal = await async_wait_for_signal(hass, receiver, timeout)
+    if not signal.timings:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="empty_signal",
+        )
+    return list(signal.timings)
+
+
+def check_rf_captures_match(
+    manager: RemoteManager,
+    first: list[int],
+    second: list[int],
+    device_title: str,
+) -> None:
+    """Raise ServiceValidationError if two RF captures don't agree.
+
+    Cheap OOK RF receivers are prone to AGC noise and an idle threshold that
+    cuts each raw dump at a slightly different point, so - unlike a
+    demodulated IR receiver - a single RF capture isn't trustworthy on its
+    own. Reuses the same tolerance as input signal matching.
+    """
+    tolerance = float(get_integration_options(manager.entry)[CONF_MATCH_TOLERANCE])
+    if not captures_match(first, second, tolerance):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="rf_learn_inconsistent",
+            translation_placeholders={"device": device_title},
+        )
+
+
+def build_rf_command_data(
+    subentry: ConfigSubentry,
+    direction: str,
+    timings: list[int],
+) -> dict[str, Any]:
+    """Build stored command_data for a confirmed RF capture.
+
+    ESPHome's infrared-compatible receiver only ever reports raw timings
+    (InfraredReceivedSignal(timings=...)), never the RF operating frequency.
+    The device's configured RF frequency is therefore the only correct
+    source here - signal.modulation would silently store the IR default
+    (~38 kHz), which a real RF transmitter would reject.
+    """
+    return {
+        "type": COMMAND_TYPE_RAW,
+        ATTR_DIRECTION: direction,
+        "carrier_frequency": subentry.data.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY),
+        "command": timings,
+        "medium": SIGNAL_MEDIUM_RF,
+        "backend": SIGNAL_BACKEND_HOMEASSISTANT_RADIO_FREQUENCY,
+    }
+
+
 async def async_learn_command(
     hass: HomeAssistant,
     manager: RemoteManager,
@@ -144,60 +212,30 @@ async def async_learn_command(
             },
         )
 
-    signal = await async_wait_for_signal(hass, receiver, timeout)
-
-    if not signal.timings:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="empty_signal",
-        )
-
     if medium == SIGNAL_MEDIUM_RF:
-        # Cheap OOK RF receivers are prone to AGC noise and an idle threshold
-        # that cuts each raw dump at a slightly different point, so - unlike a
-        # demodulated IR receiver - a single RF capture isn't trustworthy on
-        # its own. Require a second capture that agrees with the first
-        # (reusing the same tolerance as input signal matching) before
-        # storing anything, so a one-off truncated/noisy dump doesn't get
-        # silently saved and faithfully replayed as a broken command.
-        confirm_signal = await async_wait_for_signal(hass, receiver, timeout)
-        if not confirm_signal.timings:
+        # This service call has no UI to show progress in between the two
+        # captures - see DeviceSubentryFlowHandler in config_flow.py for the
+        # config-flow equivalent, which drives the same two helpers with a
+        # progress screen shown between them.
+        first_timings = await async_capture_rf_signal(hass, receiver, timeout)
+        second_timings = await async_capture_rf_signal(hass, receiver, timeout)
+        check_rf_captures_match(manager, first_timings, second_timings, subentry.title)
+        command_data = build_rf_command_data(subentry, direction, first_timings)
+    else:
+        signal = await async_wait_for_signal(hass, receiver, timeout)
+        if not signal.timings:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="empty_signal",
             )
-
-        tolerance = float(get_integration_options(manager.entry)[CONF_MATCH_TOLERANCE])
-        if not captures_match(
-            list(signal.timings), list(confirm_signal.timings), tolerance
-        ):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="rf_learn_inconsistent",
-                translation_placeholders={"device": subentry.title},
-            )
-
-        # ESPHome's infrared-compatible receiver only ever reports raw timings
-        # (InfraredReceivedSignal(timings=...)), never the RF operating
-        # frequency. The device's configured RF frequency is therefore the
-        # only correct source here - signal.modulation would silently store
-        # the IR default (~38 kHz), which a real RF transmitter would reject.
-        carrier_frequency = subentry.data.get(CONF_RF_FREQUENCY, DEFAULT_RF_FREQUENCY)
-    else:
-        carrier_frequency = signal.modulation or DEFAULT_CARRIER_FREQUENCY
-
-    command_data = {
-        "type": COMMAND_TYPE_RAW,
-        ATTR_DIRECTION: direction,
-        "carrier_frequency": carrier_frequency,
-        "command": list(signal.timings),
-        "medium": medium,
-        "backend": (
-            SIGNAL_BACKEND_HOMEASSISTANT_RADIO_FREQUENCY
-            if medium == SIGNAL_MEDIUM_RF
-            else SIGNAL_BACKEND_HOMEASSISTANT_INFRARED
-        ),
-    }
+        command_data = {
+            "type": COMMAND_TYPE_RAW,
+            ATTR_DIRECTION: direction,
+            "carrier_frequency": signal.modulation or DEFAULT_CARRIER_FREQUENCY,
+            "command": list(signal.timings),
+            "medium": medium,
+            "backend": SIGNAL_BACKEND_HOMEASSISTANT_INFRARED,
+        }
 
     await manager.async_add_command(subentry, command_name, command_data)
 

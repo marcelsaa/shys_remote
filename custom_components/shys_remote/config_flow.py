@@ -9,7 +9,12 @@ import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.components import infrared
-from homeassistant.config_entries import ConfigEntry, ConfigSubentryFlow, SubentryFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigSubentry,
+    ConfigSubentryFlow,
+    SubentryFlowResult,
+)
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -61,7 +66,13 @@ from .const import (
     irdb_attribution_placeholders,
 )
 from .irdb import IrdbClient
-from .remote import async_delete_command, async_learn_command
+from .remote import (
+    async_capture_rf_signal,
+    async_delete_command,
+    async_learn_command,
+    build_rf_command_data,
+    check_rf_captures_match,
+)
 from .manager import RemoteManager
 from .signal_transport import SIGNAL_MEDIUM_IR, SIGNAL_MEDIUM_RF
 
@@ -76,6 +87,15 @@ CTX_IRDB_QUERY = "irdb_last_query"
 CTX_IRDB_CATEGORY = "irdb_last_category"
 CTX_IRDB_PAGE = "irdb_results_page"
 CTX_IRDB_PREVIEW = "irdb_import_preview"
+
+# Context keys for the two-stage RF learn progress flow (see
+# DeviceSubentryFlowHandler._async_resume_rf_learn).
+CTX_RF_LEARN_STAGE = "rf_learn_stage"
+CTX_RF_LEARN_INPUT = "rf_learn_input"
+CTX_RF_LEARN_FIRST_TIMINGS = "rf_learn_first_timings"
+
+PROGRESS_LEARN_LISTENING_FIRST = "learn_listening_first"
+PROGRESS_LEARN_LISTENING_CONFIRM = "learn_listening_confirm"
 
 
 def _device_send_schema_fields() -> dict:
@@ -1145,15 +1165,77 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
             errors=errors,
         )
 
+    def _learn_command_form(
+        self,
+        subentry: ConfigSubentry,
+        receiver_entity_id: str,
+        errors: dict[str, str] | None = None,
+    ) -> SubentryFlowResult:
+        """Return the learn-signal form, optionally showing an error."""
+        return self.async_show_form(
+            step_id="learn_command",
+            data_schema=_learn_schema(include_input=bool(receiver_entity_id)),
+            description_placeholders={
+                "device": subentry.title,
+                "receiver": _format_entity_hint(self.hass, receiver_entity_id),
+            },
+            errors=errors or {},
+        )
+
+    def _rf_learn_progress(
+        self,
+        subentry: ConfigSubentry,
+        receiver_entity_id: str,
+        progress_action: str,
+        timeout: int,
+    ) -> SubentryFlowResult:
+        """Kick off one RF capture and show a progress screen for it."""
+        task = self.hass.async_create_task(
+            async_capture_rf_signal(self.hass, receiver_entity_id, timeout),
+            "shys_remote_rf_learn_capture",
+        )
+        return self.async_show_progress(
+            progress_action=progress_action,
+            progress_task=task,
+            description_placeholders={
+                "device": subentry.title,
+                "receiver": _format_entity_hint(self.hass, receiver_entity_id),
+            },
+        )
+
+    def _clear_rf_learn_context(self) -> None:
+        """Drop stashed state for the two-stage RF learn progress flow."""
+        self.context.pop(CTX_RF_LEARN_STAGE, None)
+        self.context.pop(CTX_RF_LEARN_INPUT, None)
+        self.context.pop(CTX_RF_LEARN_FIRST_TIMINGS, None)
+
     async def async_step_learn_command(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Learn a new remote signal."""
-        errors: dict[str, str] = {}
+        """Learn a new remote signal.
+
+        For RF devices this is a multi-stage flow: submitting the form here
+        only validates the input and starts the *first* capture as a
+        progress-tracked task (see _rf_learn_progress). Home Assistant
+        re-invokes this same method with user_input=None once that task
+        finishes - self.async_get_progress_task() is how we tell that apart
+        from the initial form render, which is also called with
+        user_input=None. _async_resume_rf_learn then drives the rest: start
+        the confirmation capture, compare the two, and either store the
+        signal or show a retryable error. IR keeps the original single-wait
+        behavior unchanged, since a demodulated IR receiver doesn't need a
+        second capture to trust the first one.
+        """
         subentry = self._get_reconfigure_subentry()
         receiver_entity_id = subentry.data.get(ATTR_RECEIVER_ENTITY_ID)
         if not receiver_entity_id:
             return await self.async_step_reconfigure()
+        receiver_entity_id = str(receiver_entity_id)
+
+        if self.async_get_progress_task() is not None:
+            return await self._async_resume_rf_learn(subentry, receiver_entity_id)
+
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             signal_name = slugify(user_input[ATTR_NAME].strip())
@@ -1168,37 +1250,96 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 except ServiceValidationError as err:
                     errors["base"] = _service_error_key(err)
                 else:
-                    try:
-                        await async_learn_command(
-                            self.hass,
-                            manager,
+                    if signal_name in manager.get_subentry_commands(
+                        subentry.subentry_id
+                    ):
+                        errors["base"] = "command_already_exists"
+                    elif subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) == SIGNAL_MEDIUM_RF:
+                        self.context[CTX_RF_LEARN_INPUT] = {
+                            ATTR_NAME: signal_name,
+                            ATTR_TIMEOUT: timeout,
+                            ATTR_DIRECTION: direction,
+                        }
+                        self.context[CTX_RF_LEARN_STAGE] = "first"
+                        return self._rf_learn_progress(
                             subentry,
-                            signal_name,
-                            timeout=timeout,
-                            direction=direction,
+                            receiver_entity_id,
+                            PROGRESS_LEARN_LISTENING_FIRST,
+                            timeout,
                         )
-                    except ServiceValidationError as err:
-                        _LOGGER.debug("Learn failed: %s", err)
-                        errors["base"] = _service_error_key(err)
                     else:
-                        return self.async_abort(
-                            reason="signal_learned",
-                            description_placeholders={
-                                "name": signal_name,
-                                "device": subentry.title,
-                            },
-                        )
+                        try:
+                            await async_learn_command(
+                                self.hass,
+                                manager,
+                                subentry,
+                                signal_name,
+                                timeout=timeout,
+                                direction=direction,
+                            )
+                        except ServiceValidationError as err:
+                            _LOGGER.debug("Learn failed: %s", err)
+                            errors["base"] = _service_error_key(err)
+                        else:
+                            return self.async_abort(
+                                reason="signal_learned",
+                                description_placeholders={
+                                    "name": signal_name,
+                                    "device": subentry.title,
+                                },
+                            )
 
-        return self.async_show_form(
-            step_id="learn_command",
-            data_schema=_learn_schema(include_input=bool(receiver_entity_id)),
-            description_placeholders={
-                "device": subentry.title,
-                "receiver": _format_entity_hint(
-                    self.hass, str(receiver_entity_id)
-                ),
-            },
-            errors=errors,
+        return self._learn_command_form(subentry, receiver_entity_id, errors)
+
+    async def _async_resume_rf_learn(
+        self,
+        subentry: ConfigSubentry,
+        receiver_entity_id: str,
+    ) -> SubentryFlowResult:
+        """Advance the RF learn flow once a capture task has finished."""
+        task = self.async_get_progress_task()
+        assert task is not None  # only called when a progress task is set
+        learn_input = self.context[CTX_RF_LEARN_INPUT]
+        stage = self.context[CTX_RF_LEARN_STAGE]
+
+        try:
+            timings = task.result()
+        except ServiceValidationError as err:
+            self._clear_rf_learn_context()
+            return self._learn_command_form(
+                subentry, receiver_entity_id, {"base": _service_error_key(err)}
+            )
+
+        if stage == "first":
+            self.context[CTX_RF_LEARN_FIRST_TIMINGS] = timings
+            self.context[CTX_RF_LEARN_STAGE] = "second"
+            return self._rf_learn_progress(
+                subentry,
+                receiver_entity_id,
+                PROGRESS_LEARN_LISTENING_CONFIRM,
+                learn_input[ATTR_TIMEOUT],
+            )
+
+        first_timings = self.context[CTX_RF_LEARN_FIRST_TIMINGS]
+        manager = self._get_manager()
+        try:
+            check_rf_captures_match(manager, first_timings, timings, subentry.title)
+        except ServiceValidationError as err:
+            self._clear_rf_learn_context()
+            return self._learn_command_form(
+                subentry, receiver_entity_id, {"base": _service_error_key(err)}
+            )
+
+        signal_name = learn_input[ATTR_NAME]
+        command_data = build_rf_command_data(
+            subentry, learn_input[ATTR_DIRECTION], first_timings
+        )
+        await manager.async_add_command(subentry, signal_name, command_data)
+        self._clear_rf_learn_context()
+
+        return self.async_abort(
+            reason="signal_learned",
+            description_placeholders={"name": signal_name, "device": subentry.title},
         )
 
     async def async_step_delete_command(

@@ -182,6 +182,10 @@
         "no_commands": "No signals are stored for this device yet.",
         "already_configured": "A device with this name already exists.",
         "reconfigure_successful": "Device settings were updated."
+      },
+      "progress": {
+        "learn_listening_first": "Press the button on the remote for {device} now.\n\nReceiver used for learning: {receiver}",
+        "learn_listening_confirm": "Got it! Press the same button again to confirm the signal.\n\nReceiver used for learning: {receiver}"
       }
     }
   },

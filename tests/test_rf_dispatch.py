@@ -340,3 +340,73 @@ def test_send_output_command_rf_without_transmitter_raises() -> None:
         )
 
     assert exc_info.value.translation_key == "invalid_emitter"
+
+
+def test_async_capture_rf_signal_returns_timings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_subscribe_receiver",
+        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
+    )
+
+    timings = asyncio.run(
+        remote_module.async_capture_rf_signal(object(), "remote.ir_receiver", 10)
+    )
+
+    assert timings == [350, -1050, 350, -350]
+
+
+def test_async_capture_rf_signal_raises_on_empty_timings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_subscribe_receiver",
+        _queued_subscribe_receiver([_FakeSignal([])]),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(
+            remote_module.async_capture_rf_signal(object(), "remote.ir_receiver", 10)
+        )
+
+    assert exc_info.value.translation_key == "empty_signal"
+
+
+def test_check_rf_captures_match_passes_for_matching_captures() -> None:
+    manager = _manager_with_entry()
+
+    remote_module.check_rf_captures_match(
+        manager,
+        [350, -1050, 350, -350],
+        [351, -1049, 349, -351],
+        "Test RF device",
+    )
+
+
+def test_check_rf_captures_match_raises_for_mismatched_captures() -> None:
+    manager = _manager_with_entry()
+
+    with pytest.raises(Exception) as exc_info:
+        remote_module.check_rf_captures_match(
+            manager,
+            [350, -1050, 350, -350],
+            [9000, -4500, 560, -560],
+            "Test RF device",
+        )
+
+    assert exc_info.value.translation_key == "rf_learn_inconsistent"
+    assert exc_info.value.translation_placeholders == {"device": "Test RF device"}
+
+
+def test_build_rf_command_data_shape() -> None:
+    subentry = _rf_subentry()
+
+    command_data = remote_module.build_rf_command_data(
+        subentry, "output", [350, -1050, 350, -350]
+    )
+
+    assert command_data == {
+        "type": "raw",
+        "direction": "output",
+        "carrier_frequency": 433_920_000,
+        "command": [350, -1050, 350, -350],
+        "medium": "rf",
+        "backend": "homeassistant_radio_frequency",
+    }
