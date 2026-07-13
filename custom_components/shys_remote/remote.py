@@ -15,6 +15,7 @@ from .const import (
     ATTR_MEDIUM,
     ATTR_NAME,
     COMMAND_TYPE_RAW,
+    CONF_MATCH_TOLERANCE,
     CONF_RF_FREQUENCY,
     CONF_SEND_REPEAT_COUNT,
     CONF_SEND_REPEAT_DELAY_MS,
@@ -26,7 +27,9 @@ from .const import (
     DIRECTION_OUTPUT,
     DOMAIN,
     get_device_send_options,
+    get_integration_options,
 )
+from .signal_matching import captures_match
 from .signal_transport import (
     SIGNAL_BACKEND_HOMEASSISTANT_INFRARED,
     SIGNAL_BACKEND_HOMEASSISTANT_RADIO_FREQUENCY,
@@ -149,8 +152,31 @@ async def async_learn_command(
             translation_key="empty_signal",
         )
 
-    medium = subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR)
     if medium == SIGNAL_MEDIUM_RF:
+        # Cheap OOK RF receivers are prone to AGC noise and an idle threshold
+        # that cuts each raw dump at a slightly different point, so - unlike a
+        # demodulated IR receiver - a single RF capture isn't trustworthy on
+        # its own. Require a second capture that agrees with the first
+        # (reusing the same tolerance as input signal matching) before
+        # storing anything, so a one-off truncated/noisy dump doesn't get
+        # silently saved and faithfully replayed as a broken command.
+        confirm_signal = await async_wait_for_signal(hass, receiver, timeout)
+        if not confirm_signal.timings:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="empty_signal",
+            )
+
+        tolerance = float(get_integration_options(manager.entry)[CONF_MATCH_TOLERANCE])
+        if not captures_match(
+            list(signal.timings), list(confirm_signal.timings), tolerance
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="rf_learn_inconsistent",
+                translation_placeholders={"device": subentry.title},
+            )
+
         # ESPHome's infrared-compatible receiver only ever reports raw timings
         # (InfraredReceivedSignal(timings=...)), never the RF operating
         # frequency. The device's configured RF frequency is therefore the

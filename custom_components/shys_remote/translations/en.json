@@ -163,6 +163,7 @@
         "command_already_exists": "This signal already exists on the device.",
         "learn_timeout": "No signal was received in time.",
         "empty_signal": "The received signal did not contain timings.",
+        "rf_learn_inconsistent": "The two captures did not match closely enough. Hold the remote steady and close to the receiver, then try again.",
         "learn_failed": "Learning the signal failed.",
         "receiver_required": "No infrared receiver is configured for this device.",
         "receiver_required_for_input": "Input or both requires a configured device receiver.",
@@ -292,6 +293,9 @@
     },
     "learn_timeout": {
       "message": "No signal received within {timeout} seconds."
+    },
+    "rf_learn_inconsistent": {
+      "message": "Two RF captures for {device} did not match within tolerance. This usually points to a noisy receiver, weak antenna or wiring issue rather than a code problem - see the README's RF section."
     },
     "not_loaded": {
       "message": "SHYS Remote is not loaded."

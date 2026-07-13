@@ -35,3 +35,22 @@ def signal_matches(
         return False
 
     return timings_match(learned, received, tolerance_percent)
+
+
+def captures_match(
+    first: list[int],
+    second: list[int],
+    tolerance_percent: float,
+) -> bool:
+    """Return whether two raw learn captures represent the same signal.
+
+    Unlike signal_matches(), neither side is assumed to be the canonical
+    "learned" pattern - this compares two fresh captures symmetrically, so
+    the shorter one is used as the reference (a longer capture just means
+    extra trailing idle/noise, which is expected and not a mismatch).
+    """
+    if not first or not second:
+        return False
+
+    shorter, longer = (first, second) if len(first) <= len(second) else (second, first)
+    return timings_match(shorter, longer, tolerance_percent)

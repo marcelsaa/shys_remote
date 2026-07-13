@@ -215,6 +215,54 @@ Notes on this config:
   Transmitter` as the **Transmitter** for an RF device — both are needed for `input`/
   `both` direction signals; output-only RF devices only need the transmitter.
 
+This workaround is expected to stay necessary for a while: Home Assistant's `radio_frequency`
+entity platform launched transmitter-only by design, with receiver entities explicitly
+deferred to a future proposal (see the
+[architecture discussion](https://github.com/home-assistant/architecture/discussions/1365)).
+There is currently no version of Home Assistant Core where a native RF receiver entity
+exists, so this isn't something a future SHYS Remote release can remove on its own.
+
+### Learn and send use the exact same raw format
+
+Learning and sending do **not** go through different data formats. Both the infrared and
+radio-frequency backends store and replay the identical `list[int]` mark/space microsecond
+sequence Home Assistant hands back from `InfraredReceivedSignal.timings` — SHYS Remote never
+decodes, re-encodes or otherwise transforms it (see `manager.build_command()` and
+`signal_transport.build_rf_command()`). No protocol (rc_switch, Intertechno, NEC, …) is ever
+assumed; this is a pure record-and-replay design and works with any ESPHome-compatible
+transmitter/receiver pair. If a learned RF signal doesn't work, the raw capture itself is
+the first thing to check — not this integration's plumbing.
+
+### If a learned RF signal doesn't control the device
+
+Since learning captures whatever the receiver hardware reports, byte for byte, a bad capture
+is stored and replayed just as faithfully as a good one. In practice, on cheap 433 MHz OOK
+receiver modules:
+
+- SHYS Remote now requires **two consecutive captures that agree** (within the integration's
+  configured **Signal match tolerance**) before it stores an RF signal — press the remote
+  button twice in a row when learning. This catches the common failure mode where AGC noise
+  or the receiver's idle/gap threshold cuts each raw dump at a different point, so every
+  press looks like a different signal. If learning keeps failing with "captures did not
+  match", the receiver itself is too noisy to learn from reliably as configured — see below.
+- Move the receiver antenna away from the ESP32/WiFi/USB noise sources, and closer to
+  the remote during learning.
+- On ESP32, a dedicated receiver chip (e.g. **CC1101**) generally decodes far more
+  consistently than a bare OOK/ASK receiver module (e.g. FS1000A/XY-MK-5V-class boards),
+  because it does its own signal conditioning instead of relying on the ESP32 to sample a
+  noisy analog line.
+- Check the `remote_receiver`'s `filter`/`idle` timing in your ESPHome YAML — too short an
+  `idle` cuts a real code into multiple fragments; too long merges unrelated noise into one
+  capture.
+- On the transmit side, make sure the RF `remote_transmitter` has `carrier_duty_percent: 100%`
+  (see the example above) — RF hardware does its own carrier generation, and any other duty
+  cycle tells the ESP32 to additionally modulate the line in software, which corrupts the
+  raw envelope for genuinely fixed-code OOK receivers.
+- If receiving still won't decode consistently even on a CC1101, but sending confirms RF
+  energy is emitted, treat it as a receiver/antenna/firmware issue to resolve on the ESPHome
+  side rather than something to work around in SHYS Remote — this integration only stores
+  and replays whatever timings the receiver reports.
+
 ## Installation
 
 ### HACS (recommended after repository publish)

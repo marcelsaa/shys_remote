@@ -108,7 +108,14 @@ def get_transport_entity_id(
 
 
 def build_rf_command(command: RawSignalCommand) -> RadioFrequencyCommand:
-    """Build a Home Assistant-compatible radio_frequency command from raw timings."""
+    """Build a Home Assistant-compatible radio_frequency command from raw timings.
+
+    repeat_count is intentionally always 0 here (single burst per command).
+    Repeats are handled one layer up, by async_send_output_command() issuing
+    multiple separate calls with a real delay between them - the wire-level
+    repeat_count on this command has no accompanying pause/gap parameter, so
+    it can't reproduce that timing on its own. Setting both would double up.
+    """
     try:
         from rf_protocols.commands.ook import OOKCommand
     except ImportError:  # pragma: no cover - optional dependency in tests

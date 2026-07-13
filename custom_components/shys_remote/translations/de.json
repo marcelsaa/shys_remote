@@ -163,6 +163,7 @@
         "command_already_exists": "Dieses Signal existiert auf dem Gerät bereits.",
         "learn_timeout": "Innerhalb der Wartezeit wurde kein Signal empfangen.",
         "empty_signal": "Das empfangene Signal enthielt keine Timings.",
+        "rf_learn_inconsistent": "Die beiden Aufnahmen stimmten nicht ausreichend überein. Fernbedienung ruhig halten, nah am Empfänger, und erneut versuchen.",
         "learn_failed": "Das Anlernen ist fehlgeschlagen.",
         "receiver_required": "Für dieses Gerät ist kein Infrared Empfänger konfiguriert.",
         "receiver_required_for_input": "Input oder Beides benötigt einen konfigurierten Geräte-Empfänger.",
@@ -292,6 +293,9 @@
     },
     "learn_timeout": {
       "message": "Innerhalb von {timeout} Sekunden wurde kein Signal empfangen."
+    },
+    "rf_learn_inconsistent": {
+      "message": "Zwei RF-Aufnahmen für {device} stimmten nicht innerhalb der Toleranz überein. Das deutet meist auf einen verrauschten Empfänger, eine schwache Antenne oder ein Verkabelungsproblem hin, nicht auf ein Codeproblem - siehe den RF-Abschnitt der README."
     },
     "not_loaded": {
       "message": "SHYS Remote ist nicht geladen."
