@@ -12,10 +12,15 @@ functions below.
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import shys_remote.config_flow as config_flow
 
 RF_FREQUENCY = 433_920_000
+
+
+def _hass(language: str = "en") -> SimpleNamespace:
+    return SimpleNamespace(config=SimpleNamespace(language=language))
 
 
 def _rf_transmitters(entities: list[str]):
@@ -177,3 +182,46 @@ def test_radio_frequency_transmitters_returns_empty_when_component_missing(
     )
 
     assert config_flow._radio_frequency_transmitters(object(), RF_FREQUENCY) == []
+
+
+def test_transmitter_hint_empty_when_transmitters_exist(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_emitters",
+        lambda hass: ["remote.ir_blaster"],
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters([]),
+    )
+
+    assert config_flow._transmitter_hint(_hass()) == ""
+
+
+def test_transmitter_hint_explains_when_none_found_en(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_emitters", lambda hass: []
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters([]),
+    )
+
+    hint = config_flow._transmitter_hint(_hass("en"))
+
+    assert "No transmitter found" in hint
+    assert "ir_rf_proxy" in hint
+
+
+def test_transmitter_hint_explains_when_none_found_de(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_emitters", lambda hass: []
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.radio_frequency.async_get_transmitters",
+        _rf_transmitters([]),
+    )
+
+    hint = config_flow._transmitter_hint(_hass("de"))
+
+    assert "Kein Transmitter gefunden" in hint
+    assert "ir_rf_proxy" in hint

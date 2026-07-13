@@ -322,6 +322,36 @@ def _transmitter_entity_ids(hass, *, rf_frequency: int = DEFAULT_RF_FREQUENCY) -
     return sorted(entities)
 
 
+def _transmitter_hint(hass) -> str:
+    """Return a diagnostic hint appended to the add-device description.
+
+    A device with zero transmitter entities usually isn't a SHYS Remote
+    problem: it means Home Assistant's esphome integration never created an
+    infrared/radio_frequency entity for that device in the first place
+    (wrong ir_rf_proxy platform key, missing hardware wiring, or an
+    ESPHome/HA version too old for the hardware in use - CC1101 boards in
+    particular need ESPHome's `radio_frequency:` platform, not `infrared:`,
+    plus `on_transmit`/`on_complete` state hooks). Point at the README
+    instead of silently showing an empty picker.
+    """
+    if _transmitter_entity_ids(hass):
+        return ""
+
+    if hass.config.language.lower().startswith("de"):
+        return (
+            "\n\nKein Transmitter gefunden: Das ESPHome-Gerät hat (noch) keine "
+            "infrared- oder radio_frequency-Entität in Home Assistant erzeugt. "
+            "Prüfe die ir_rf_proxy-Plattform in deiner ESPHome-YAML (siehe "
+            "README) und ob das Gerät online ist."
+        )
+    return (
+        "\n\nNo transmitter found: your ESPHome device hasn't created an "
+        "infrared or radio_frequency entity in Home Assistant (yet). Check "
+        "the ir_rf_proxy platform in your ESPHome YAML (see the README) and "
+        "that the device is online."
+    )
+
+
 def _validate_transport_entities(
     hass,
     receiver: str | None,
@@ -803,6 +833,9 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                 if user_input is not None
                 else schema
             ),
+            description_placeholders={
+                "transmitter_hint": _transmitter_hint(self.hass)
+            },
             errors=errors,
         )
 

@@ -39,7 +39,7 @@
       "step": {
         "user": {
           "title": "Add device",
-          "description": "Create a device and select the transmitter. The receiver is optional.\n\nWithout a receiver, only output signals are available; input/binary sensors and learning are disabled.",
+          "description": "Create a device and select the transmitter. The receiver is optional.\n\nWithout a receiver, only output signals are available; input/binary sensors and learning are disabled.{transmitter_hint}",
           "data": {
             "device_name": "Device name",
             "medium": "Signal medium",

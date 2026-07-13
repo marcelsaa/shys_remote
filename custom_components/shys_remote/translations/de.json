@@ -39,7 +39,7 @@
       "step": {
         "user": {
           "title": "Gerät hinzufügen",
-          "description": "Lege ein Gerät an und wähle den passenden Transmitter. Der Empfänger ist optional.\n\nOhne Empfänger sind nur Output-Signale möglich; Input/Binary-Sensoren und Anlernen sind deaktiviert.",
+          "description": "Lege ein Gerät an und wähle den passenden Transmitter. Der Empfänger ist optional.\n\nOhne Empfänger sind nur Output-Signale möglich; Input/Binary-Sensoren und Anlernen sind deaktiviert.{transmitter_hint}",
           "data": {
             "device_name": "Gerätename",
             "medium": "Signal-Medium",

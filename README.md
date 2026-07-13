@@ -263,6 +263,77 @@ receiver modules:
   side rather than something to work around in SHYS Remote — this integration only stores
   and replays whatever timings the receiver reports.
 
+### Using other RF hardware (e.g. CC1101)
+
+SHYS Remote has no vendor- or chip-specific code anywhere — it only ever talks to standard
+Home Assistant `infrared`/`radio_frequency` entities, whatever integration created them. Any
+ESPHome device (or Broadlink, or any other integration implementing those platforms) works
+the moment it exposes such an entity; nothing needs adjusting in SHYS Remote itself. If a
+device's entities don't show up in the transmitter/receiver picker, that always means Home
+Assistant never created an entity for it — check the device's own ESPHome YAML and online
+status first. The **Add device** step now shows a hint directly in Home Assistant when no
+transmitter entities are found at all, pointing back here.
+
+A common cause with **CC1101** boards specifically: unlike a bare FS1000A/XY-MK-5V module
+that just needs a GPIO pin, the CC1101 is a real SPI radio and needs to be told when to
+switch between transmit and receive mode. Wiring it under the wrong ESPHome platform (
+`infrared:` instead of `radio_frequency:`), or omitting the mode-switch callbacks, results
+in an ESPHome device that looks fine in the ESPHome logs but never creates a usable entity
+in Home Assistant — indistinguishable, from SHYS Remote's side, from a device that was never
+flashed. This requires **ESPHome 2026.5.0 or newer** (CC1101 support in the `radio_frequency:`
+platform). Example:
+
+```yaml
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+cc1101:
+  id: cc1101_radio
+  cs_pin: GPIO5
+  gdo0_pin: GPIO27
+  gdo2_pin: GPIO26
+  frequency: 433.92MHz
+  modulation_type: ASK_OOK
+
+remote_transmitter:
+  id: rf_tx
+  pin: GPIO27
+  carrier_duty_percent: 100%
+  on_transmit:
+    then:
+      - cc1101.begin_tx: cc1101_radio
+  on_complete:
+    then:
+      - cc1101.begin_rx: cc1101_radio
+
+remote_receiver:
+  id: rf_rx
+  pin: GPIO26
+  dump: raw
+
+infrared:
+  - platform: ir_rf_proxy
+    name: RF Learning Receiver
+    remote_receiver_id: rf_rx
+
+radio_frequency:
+  - platform: ir_rf_proxy
+    name: RF Proxy Transmitter
+    frequency: 433.92MHz
+    remote_transmitter_id: rf_tx
+```
+
+This mirrors the KC868 example above: the receiver is still exposed through the `infrared:`
+platform (the learning workaround explained earlier applies to any RF hardware, not just
+FS1000A-style modules), while the transmitter goes through the native `radio_frequency:`
+platform. The `on_transmit`/`on_complete` hooks are what actually switch the CC1101 between
+its TX and RX radio states — without them the chip stays in whichever mode it last was and
+transmission silently does nothing. See ESPHome's
+[`cc1101`](https://esphome.io/components/cc1101/) docs for the full option list (dual-pin
+vs. single-pin wiring, output power, symbol rate) and adjust pins for your board.
+
 ## Installation
 
 ### HACS (recommended after repository publish)
