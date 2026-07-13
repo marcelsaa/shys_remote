@@ -1190,6 +1190,28 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
     async def async_step_learn_command(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
+        """Learn a new remote signal - see _async_step_learn_command.
+
+        Thin wrapper that guarantees this step never lets an exception
+        escape uncaught. The inner implementation already converts every
+        error it anticipates (ServiceValidationError, capture/store
+        failures) into a form with a translated errors["base"], but a step
+        method raising *anything* uncaught - including something as basic
+        as _get_reconfigure_subentry() or _format_entity_hint() hitting an
+        edge case - makes Home Assistant's frontend show a generic "Unknown
+        error occurred" with no indication of what happened or where. This
+        outer try/except is the last line of defense against that, on top
+        of (not instead of) the inner handling.
+        """
+        try:
+            return await self._async_step_learn_command(user_input)
+        except Exception:  # noqa: BLE001 - see docstring
+            _LOGGER.exception("Unexpected error in learn_command step")
+            return self.async_abort(reason="learn_step_failed")
+
+    async def _async_step_learn_command(
+        self, user_input: dict[str, Any] | None
+    ) -> SubentryFlowResult:
         """Learn a new remote signal.
 
         RF devices need two consecutive captures that agree before a signal
@@ -1292,6 +1314,18 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
 
     async def async_step_learn_command_confirm(
         self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Second capture confirming the first one - see
+        _async_step_learn_command_confirm and async_step_learn_command's
+        wrapper docstring for why this outer try/except exists."""
+        try:
+            return await self._async_step_learn_command_confirm(user_input)
+        except Exception:  # noqa: BLE001 - never a blank/"Unknown error" dialog
+            _LOGGER.exception("Unexpected error in learn_command_confirm step")
+            return self.async_abort(reason="learn_step_failed")
+
+    async def _async_step_learn_command_confirm(
+        self, user_input: dict[str, Any] | None
     ) -> SubentryFlowResult:
         """Second capture confirming the first one - see
         async_step_learn_command for why this is a separate step."""

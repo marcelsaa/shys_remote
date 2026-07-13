@@ -185,7 +185,8 @@
         "signal_deleted": "Signal {name} wurde von {device} entfernt.",
         "no_commands": "Für dieses Gerät sind noch keine Signale gespeichert.",
         "already_configured": "Ein Gerät mit diesem Namen existiert bereits.",
-        "reconfigure_successful": "Geräteeinstellungen wurden aktualisiert."
+        "reconfigure_successful": "Geräteeinstellungen wurden aktualisiert.",
+        "learn_step_failed": "Beim Anlernen des Signals ist ein unerwarteter Fehler aufgetreten. Bitte erneut versuchen."
       }
     }
   },

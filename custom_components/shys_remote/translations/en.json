@@ -185,7 +185,8 @@
         "signal_deleted": "Signal {name} was removed from {device}.",
         "no_commands": "No signals are stored for this device yet.",
         "already_configured": "A device with this name already exists.",
-        "reconfigure_successful": "Device settings were updated."
+        "reconfigure_successful": "Device settings were updated.",
+        "learn_step_failed": "An unexpected error occurred while learning the signal. Please try again."
       }
     }
   },

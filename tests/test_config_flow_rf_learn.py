@@ -5,7 +5,7 @@ helper functions, since ConfigSubentryFlow is stubbed as an empty class in
 this dev environment - see its docstring), these tests call
 DeviceSubentryFlowHandler's async_step_learn_command/
 async_step_learn_command_confirm directly as unbound functions
-(``DeviceSubentryFlowHandler.async_step_learn_command(fake, ...)``) against
+(``DeviceSubentryFlowHandler._async_step_learn_command(fake, ...)``) against
 a minimal duck-typed double that implements just the FlowHandler surface
 those methods actually use: ``context``, ``async_show_form`` and
 ``async_abort``. That's enough to verify the real step logic without
@@ -149,7 +149,7 @@ def test_learn_command_rf_first_capture_shows_confirm_step(monkeypatch) -> None:
     flow = _flow(_rf_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
+        DeviceSubentryFlowHandler._async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -181,7 +181,7 @@ def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None
     flow = _flow(_rf_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
+        DeviceSubentryFlowHandler._async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -217,7 +217,7 @@ def test_learn_command_ir_unaffected(monkeypatch) -> None:
     flow = _flow(_ir_subentry(), manager, monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
+        DeviceSubentryFlowHandler._async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
     )
@@ -250,7 +250,7 @@ def test_learn_command_confirm_match_stores_and_aborts(monkeypatch) -> None:
     )
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, {})
     )
 
     assert result == {
@@ -283,7 +283,7 @@ def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatc
     )
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, {})
     )
 
     assert result["type"] == "form"
@@ -298,7 +298,7 @@ def test_learn_command_confirm_without_prior_context_falls_back(monkeypatch) -> 
     flow = _flow(_rf_subentry(), _manager(), monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
+        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, None)
     )
 
     assert result["type"] == "form"
@@ -318,12 +318,62 @@ def test_learn_command_confirm_renders_form_before_submission(monkeypatch) -> No
     flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
+        DeviceSubentryFlowHandler._async_step_learn_command_confirm(flow, None)
     )
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command_confirm"
     assert flow.context["confirm_only"] is True
+
+
+def test_learn_command_wrapper_catches_unanticipated_exception(monkeypatch) -> None:
+    """The public async_step_learn_command must never let an exception it
+    didn't specifically anticipate (e.g. _get_reconfigure_subentry itself
+    failing) turn into Home Assistant's generic "Unknown error occurred" -
+    it must fall back to a translated abort instead."""
+    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
+
+    def _boom():
+        raise RuntimeError("registry lookup exploded")
+
+    flow._get_reconfigure_subentry = _boom
+
+    result = _run(
+        DeviceSubentryFlowHandler.async_step_learn_command(
+            flow, {"name": "power", "timeout": 10, "direction": "output"}
+        )
+    )
+
+    assert result == {
+        "type": "abort",
+        "reason": "learn_step_failed",
+        "description_placeholders": None,
+    }
+
+
+def test_learn_command_confirm_wrapper_catches_unanticipated_exception(monkeypatch) -> None:
+    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
+    flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
+        "name": "power",
+        "timeout": 10,
+        "direction": "output",
+    }
+    flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
+
+    def _boom():
+        raise RuntimeError("registry lookup exploded")
+
+    flow._get_reconfigure_subentry = _boom
+
+    result = _run(
+        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
+    )
+
+    assert result == {
+        "type": "abort",
+        "reason": "learn_step_failed",
+        "description_placeholders": None,
+    }
 
 
 def _run(coro):
