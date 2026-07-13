@@ -68,6 +68,13 @@ class _FakeFlow:
             "description_placeholders": description_placeholders,
         }
 
+    def _set_confirm_only(self) -> None:
+        # Real signature per homeassistant.config_entries.ConfigFlow -
+        # not available on the empty ConfigSubentryFlow stub used in this
+        # dev environment (see conftest.py), so reimplemented here rather
+        # than bound from the real class.
+        self.context["confirm_only"] = True
+
     def _get_reconfigure_subentry(self):
         return self._subentry
 
@@ -155,6 +162,9 @@ def test_learn_command_rf_first_capture_shows_confirm_step(monkeypatch) -> None:
         "direction": "output",
     }
     assert flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] == [350, -1050, 350, -350]
+    # A zero-field vol.Schema({}) form didn't reliably render its
+    # description text in the frontend - confirm_only is the fix.
+    assert flow.context["confirm_only"] is True
 
 
 def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None:
@@ -180,6 +190,7 @@ def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None
     assert result["step_id"] == "learn_command"
     assert result["errors"]
     assert config_flow.CTX_RF_LEARN_INPUT not in flow.context
+    assert "confirm_only" not in flow.context
 
 
 def test_learn_command_ir_unaffected(monkeypatch) -> None:
@@ -262,6 +273,9 @@ def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatc
         "direction": "output",
     }
     flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
+    # Simulates the flag the confirm step's own render would have set -
+    # must not leak into the real form we're falling back to here.
+    flow.context["confirm_only"] = True
 
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
@@ -274,6 +288,7 @@ def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatc
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command"
+    assert "confirm_only" not in flow.context
     assert result["errors"] == {"base": "rf_learn_inconsistent"}
 
 
@@ -308,6 +323,7 @@ def test_learn_command_confirm_renders_form_before_submission(monkeypatch) -> No
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command_confirm"
+    assert flow.context["confirm_only"] is True
 
 
 def _run(coro):
