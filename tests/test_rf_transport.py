@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-ROOT = Path("/home/marcel/Projekte/SHYS_RF")
+ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATH = ROOT / "custom_components" / "shys_remote" / "signal_transport.py"
 SPEC = importlib.util.spec_from_file_location("shys_remote_signal_transport", MODULE_PATH)
 assert SPEC and SPEC.loader
