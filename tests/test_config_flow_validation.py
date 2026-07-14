@@ -225,3 +225,19 @@ def test_transmitter_hint_explains_when_none_found_de(monkeypatch) -> None:
 
     assert "Kein Transmitter gefunden" in hint
     assert "ir_rf_proxy" in hint
+
+
+def test_capture_hint_empty_for_ir() -> None:
+    assert config_flow._capture_hint(_hass(), "ir") == ""
+
+
+def test_capture_hint_explains_hold_button_for_rf_en() -> None:
+    hint = config_flow._capture_hint(_hass("en"), "rf")
+
+    assert "hold the button" in hint.lower()
+
+
+def test_capture_hint_explains_hold_button_for_rf_de() -> None:
+    hint = config_flow._capture_hint(_hass("de"), "rf")
+
+    assert "gedrückt halten" in hint

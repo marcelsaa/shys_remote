@@ -126,7 +126,7 @@
         },
         "learn_command": {
           "title": "Learn signal",
-          "description": "Enter a name and direction for the signal, submit the form, then press the button on the remote for {device} within the timeout.\n\nReceiver used for learning: {receiver}",
+          "description": "Enter a name and direction for the signal, submit the form, then press the button on the remote for {device} within the timeout.\n\nReceiver used for learning: {receiver}{capture_hint}",
           "data": {
             "name": "Signal name",
             "direction": "Direction",
@@ -137,10 +137,6 @@
             "direction": "Output creates a send button. Input creates a binary sensor. Both creates a button and binary sensor at once.",
             "timeout": "How long Home Assistant waits for the next signal after you submit this form."
           }
-        },
-        "learn_command_confirm": {
-          "title": "Confirm signal",
-          "description": "First capture received for {device}. Press the same button again now to confirm the signal.\n\nReceiver used for learning: {receiver}"
         },
         "delete_command": {
           "title": "Delete signal",
@@ -167,7 +163,7 @@
         "command_already_exists": "This signal already exists on the device.",
         "learn_timeout": "No signal was received in time.",
         "empty_signal": "The received signal did not contain timings.",
-        "rf_learn_inconsistent": "The two captures did not match closely enough. Hold the remote steady and close to the receiver, then try again.",
+        "rf_capture_too_short": "The captured signal was too short to be a real remote signal. Hold the remote closer to the receiver and try again.",
         "learn_failed": "Learning the signal failed.",
         "receiver_required": "No infrared receiver is configured for this device.",
         "receiver_required_for_input": "Input or both requires a configured device receiver.",
@@ -299,8 +295,8 @@
     "learn_timeout": {
       "message": "No signal received within {timeout} seconds."
     },
-    "rf_learn_inconsistent": {
-      "message": "Two RF captures for {device} did not match within tolerance. This usually points to a noisy receiver, weak antenna or wiring issue rather than a code problem - see the README's RF section."
+    "rf_capture_too_short": {
+      "message": "The captured RF signal was too short to be a real remote signal."
     },
     "not_loaded": {
       "message": "SHYS Remote is not loaded."

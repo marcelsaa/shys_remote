@@ -126,7 +126,7 @@
         },
         "learn_command": {
           "title": "Signal anlernen",
-          "description": "Gib einen Namen und die Richtung für das Signal ein, bestätige das Formular und drücke danach innerhalb der Wartezeit die Taste auf der Fernbedienung für {device}.\n\nEmpfänger zum Anlernen: {receiver}",
+          "description": "Gib einen Namen und die Richtung für das Signal ein, bestätige das Formular und drücke danach innerhalb der Wartezeit die Taste auf der Fernbedienung für {device}.\n\nEmpfänger zum Anlernen: {receiver}{capture_hint}",
           "data": {
             "name": "Signalname",
             "direction": "Richtung",
@@ -137,10 +137,6 @@
             "direction": "Output erzeugt einen Sende-Button. Input erzeugt einen Binary Sensor. Beides erzeugt Button und Binary Sensor gleichzeitig.",
             "timeout": "Wie lange Home Assistant nach dem Absenden des Formulars auf das nächste Signal wartet."
           }
-        },
-        "learn_command_confirm": {
-          "title": "Signal bestätigen",
-          "description": "Erste Aufnahme für {device} empfangen. Drücke jetzt dieselbe Taste noch einmal, um das Signal zu bestätigen.\n\nEmpfänger zum Anlernen: {receiver}"
         },
         "delete_command": {
           "title": "Signal löschen",
@@ -167,7 +163,7 @@
         "command_already_exists": "Dieses Signal existiert auf dem Gerät bereits.",
         "learn_timeout": "Innerhalb der Wartezeit wurde kein Signal empfangen.",
         "empty_signal": "Das empfangene Signal enthielt keine Timings.",
-        "rf_learn_inconsistent": "Die beiden Aufnahmen stimmten nicht ausreichend überein. Fernbedienung ruhig halten, nah am Empfänger, und erneut versuchen.",
+        "rf_capture_too_short": "Das erfasste Signal war zu kurz, um ein echtes Fernbedienungssignal zu sein. Fernbedienung näher an den Empfänger halten und erneut versuchen.",
         "learn_failed": "Das Anlernen ist fehlgeschlagen.",
         "receiver_required": "Für dieses Gerät ist kein Infrared Empfänger konfiguriert.",
         "receiver_required_for_input": "Input oder Beides benötigt einen konfigurierten Geräte-Empfänger.",
@@ -299,8 +295,8 @@
     "learn_timeout": {
       "message": "Innerhalb von {timeout} Sekunden wurde kein Signal empfangen."
     },
-    "rf_learn_inconsistent": {
-      "message": "Zwei RF-Aufnahmen für {device} stimmten nicht innerhalb der Toleranz überein. Das deutet meist auf einen verrauschten Empfänger, eine schwache Antenne oder ein Verkabelungsproblem hin, nicht auf ein Codeproblem - siehe den RF-Abschnitt der README."
+    "rf_capture_too_short": {
+      "message": "Das erfasste RF-Signal war zu kurz, um ein echtes Fernbedienungssignal zu sein."
     },
     "not_loaded": {
       "message": "SHYS Remote ist nicht geladen."

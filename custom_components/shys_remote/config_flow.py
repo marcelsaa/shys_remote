@@ -66,13 +66,7 @@ from .const import (
     irdb_attribution_placeholders,
 )
 from .irdb import IrdbClient
-from .remote import (
-    async_capture_rf_signal,
-    async_delete_command,
-    async_learn_command,
-    build_rf_command_data,
-    check_rf_captures_match,
-)
+from .remote import async_delete_command, async_learn_command
 from .manager import RemoteManager
 from .signal_transport import SIGNAL_MEDIUM_IR, SIGNAL_MEDIUM_RF
 
@@ -87,13 +81,6 @@ CTX_IRDB_QUERY = "irdb_last_query"
 CTX_IRDB_CATEGORY = "irdb_last_category"
 CTX_IRDB_PAGE = "irdb_results_page"
 CTX_IRDB_PREVIEW = "irdb_import_preview"
-
-# Context keys bridging async_step_learn_command's first RF capture to
-# async_step_learn_command_confirm's second one (see that method's
-# docstring for why this is two plain form steps rather than a
-# show_progress/progress_task flow).
-CTX_RF_LEARN_INPUT = "rf_learn_input"
-CTX_RF_LEARN_FIRST_TIMINGS = "rf_learn_first_timings"
 
 
 def _device_send_schema_fields() -> dict:
@@ -367,6 +354,31 @@ def _transmitter_hint(hass) -> str:
         "infrared or radio_frequency entity in Home Assistant (yet). Check "
         "the ir_rf_proxy platform in your ESPHome YAML (see the README) and "
         "that the device is online."
+    )
+
+
+def _capture_hint(hass, medium: str) -> str:
+    """Return extra learn-form guidance for RF captures.
+
+    RF signals are learned as a single raw capture with no confirmation
+    step (see _async_step_learn_command) - holding the button down until
+    it's released lets the ESPHome receiver's own idle timeout capture the
+    whole multi-repeat burst in one raw dump, rather than cutting it off
+    after the first repeat. IR receivers demodulate a clean single code, so
+    they don't need this.
+    """
+    if medium != SIGNAL_MEDIUM_RF:
+        return ""
+
+    if hass.config.language.lower().startswith("de"):
+        return (
+            "\n\nFür Funksignale: Taste gedrückt halten, bis das Signal "
+            "erfasst wurde, damit die komplette Wiederholungsfolge in "
+            "einer Aufnahme landet."
+        )
+    return (
+        "\n\nFor RF signals: hold the button down until the signal is "
+        "captured, so the whole repeat burst ends up in one recording."
     )
 
 
@@ -1170,14 +1182,15 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
         errors: dict[str, str] | None = None,
     ) -> SubentryFlowResult:
         """Return the learn-signal form, optionally showing an error."""
-        self.context.pop(CTX_RF_LEARN_INPUT, None)
-        self.context.pop(CTX_RF_LEARN_FIRST_TIMINGS, None)
         return self.async_show_form(
             step_id="learn_command",
             data_schema=_learn_schema(include_input=bool(receiver_entity_id)),
             description_placeholders={
                 "device": subentry.title,
                 "receiver": _format_entity_hint(self.hass, receiver_entity_id),
+                "capture_hint": _capture_hint(
+                    self.hass, subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR)
+                ),
             },
             errors=errors or {},
         )
@@ -1209,24 +1222,18 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Learn a new remote signal.
 
-        RF devices need two consecutive captures that agree before a signal
-        is stored (see check_rf_captures_match) - a single noisy OOK capture
-        isn't trustworthy on its own. This used to be driven by Home
-        Assistant's show_progress/progress_task mechanism to show "press
-        now" / "press again" in between, but that turned out to be
-        unreliable for a *second* consecutive progress step within one flow
-        (home-assistant/core#95749: the flow gets re-entered - and the
-        still-pending task's .result() called - before that second task has
-        actually finished listening, so it never really waits and just
-        fails immediately). Two plain form-based steps instead: this one
-        blocks synchronously on the first capture and, on success, shows a
-        confirmation form; async_step_learn_command_confirm blocks on the
-        second once that form is submitted. Both use nothing but
-        async_show_form/async_abort, which every Home Assistant version
-        supports the same way - no progress_task, no timing-sensitive
-        callbacks. IR keeps the original single-wait behavior unchanged,
-        since a demodulated IR receiver doesn't need a second capture to
-        trust the first one.
+        IR and RF are both learned with a single blocking capture within
+        this step call, via async_learn_command(). RF used to need a
+        second, confirming capture, but that doesn't work for devices that
+        send a multi-repeat burst with rotating/jittering content per press
+        (e.g. Emil-Lux/Tronic sockets, which send ~4 cycles per button
+        press) - two independent presses of such a remote are *expected* to
+        differ, so comparing them only ever produced false "doesn't match"
+        failures. async_learn_command() now applies a much weaker,
+        protocol-agnostic sanity check instead
+        (validate_rf_capture_length() in remote.py): reject only captures
+        too short to plausibly be a real signal, not ones that merely
+        differ from an earlier one.
         """
         subentry = self._get_reconfigure_subentry()
         receiver_entity_id = subentry.data.get(ATTR_RECEIVER_ENTITY_ID)
@@ -1253,43 +1260,6 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                         subentry.subentry_id
                     ):
                         errors["base"] = "command_already_exists"
-                    elif subentry.data.get(ATTR_MEDIUM, SIGNAL_MEDIUM_IR) == SIGNAL_MEDIUM_RF:
-                        try:
-                            first_timings = await async_capture_rf_signal(
-                                self.hass, receiver_entity_id, timeout
-                            )
-                        except ServiceValidationError as err:
-                            errors["base"] = _service_error_key(err)
-                        except Exception:  # noqa: BLE001 - never a blank error
-                            _LOGGER.exception("RF learn first capture failed unexpectedly")
-                            errors["base"] = "learn_failed"
-                        else:
-                            self.context[CTX_RF_LEARN_INPUT] = {
-                                ATTR_NAME: signal_name,
-                                ATTR_TIMEOUT: timeout,
-                                ATTR_DIRECTION: direction,
-                            }
-                            self.context[CTX_RF_LEARN_FIRST_TIMINGS] = first_timings
-                            # No data_schema (equivalent to an empty one):
-                            # Home Assistant's step-flow-form frontend
-                            # component always renders the step description
-                            # regardless of whether there are fields, and
-                            # only renders <ha-form> at all when
-                            # data_schema is non-empty - so this alone is
-                            # enough for a description-only confirmation
-                            # form. _set_confirm_only() was tried here
-                            # before, but that method only exists on
-                            # ConfigFlow, not ConfigSubentryFlow, and
-                            # raised AttributeError on every use.
-                            return self.async_show_form(
-                                step_id="learn_command_confirm",
-                                description_placeholders={
-                                    "device": subentry.title,
-                                    "receiver": _format_entity_hint(
-                                        self.hass, receiver_entity_id
-                                    ),
-                                },
-                            )
                     else:
                         try:
                             await async_learn_command(
@@ -1313,85 +1283,6 @@ class DeviceSubentryFlowHandler(ConfigSubentryFlow):
                             )
 
         return self._learn_command_form(subentry, receiver_entity_id, errors)
-
-    async def async_step_learn_command_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Second capture confirming the first one - see
-        _async_step_learn_command_confirm and async_step_learn_command's
-        wrapper docstring for why this outer try/except exists."""
-        try:
-            return await self._async_step_learn_command_confirm(user_input)
-        except Exception:  # noqa: BLE001 - never a blank/"Unknown error" dialog
-            _LOGGER.exception("Unexpected error in learn_command_confirm step")
-            return self.async_abort(reason="learn_step_failed")
-
-    async def _async_step_learn_command_confirm(
-        self, user_input: dict[str, Any] | None
-    ) -> SubentryFlowResult:
-        """Second capture confirming the first one - see
-        async_step_learn_command for why this is a separate step."""
-        subentry = self._get_reconfigure_subentry()
-        receiver_entity_id = str(subentry.data.get(ATTR_RECEIVER_ENTITY_ID))
-        learn_input = self.context.get(CTX_RF_LEARN_INPUT)
-        first_timings = self.context.get(CTX_RF_LEARN_FIRST_TIMINGS)
-
-        if learn_input is None or first_timings is None:
-            # Only reachable via async_step_learn_command, which always sets
-            # both right before showing this step - but never strand the
-            # user on a dead end if flow state ever gets out of sync.
-            _LOGGER.error("RF learn confirm step reached without expected flow state")
-            return self._learn_command_form(
-                subentry, receiver_entity_id, {"base": "learn_failed"}
-            )
-
-        if user_input is not None:
-            try:
-                manager = self._get_manager()
-                second_timings = await async_capture_rf_signal(
-                    self.hass, receiver_entity_id, learn_input[ATTR_TIMEOUT]
-                )
-                check_rf_captures_match(
-                    manager, first_timings, second_timings, subentry.title
-                )
-            except ServiceValidationError as err:
-                return self._learn_command_form(
-                    subentry, receiver_entity_id, {"base": _service_error_key(err)}
-                )
-            except Exception:  # noqa: BLE001 - never a blank error
-                _LOGGER.exception("RF learn confirm capture failed unexpectedly")
-                return self._learn_command_form(
-                    subentry, receiver_entity_id, {"base": "learn_failed"}
-                )
-
-            signal_name = learn_input[ATTR_NAME]
-            command_data = build_rf_command_data(
-                subentry, learn_input[ATTR_DIRECTION], first_timings
-            )
-            try:
-                await manager.async_add_command(subentry, signal_name, command_data)
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Failed to store learned RF signal")
-                return self._learn_command_form(
-                    subentry, receiver_entity_id, {"base": "learn_failed"}
-                )
-
-            self.context.pop(CTX_RF_LEARN_INPUT, None)
-            self.context.pop(CTX_RF_LEARN_FIRST_TIMINGS, None)
-            return self.async_abort(
-                reason="signal_learned",
-                description_placeholders={"name": signal_name, "device": subentry.title},
-            )
-
-        # No data_schema needed - see the matching comment in
-        # async_step_learn_command for why.
-        return self.async_show_form(
-            step_id="learn_command_confirm",
-            description_placeholders={
-                "device": subentry.title,
-                "receiver": _format_entity_hint(self.hass, receiver_entity_id),
-            },
-        )
 
     async def async_step_delete_command(
         self, user_input: dict[str, Any] | None = None

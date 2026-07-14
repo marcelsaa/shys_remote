@@ -176,7 +176,7 @@ def test_learn_command_stores_device_rf_frequency_not_signal_modulation(monkeypa
     signal.modulation - it only ever sends raw timings. Using signal.modulation
     for RF would silently store the IR default (~38 kHz) instead of the
     device's real RF transmit frequency."""
-    timings = [350, -1050, 350, -350]
+    timings = [350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350]
 
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_get_receivers",
@@ -184,9 +184,7 @@ def test_learn_command_stores_device_rf_frequency_not_signal_modulation(monkeypa
     )
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver(
-            [_FakeSignal(timings), _FakeSignal(list(timings))]
-        ),
+        _queued_subscribe_receiver([_FakeSignal(timings)]),
     )
 
     manager = _manager_with_entry()
@@ -210,10 +208,13 @@ def test_learn_command_stores_device_rf_frequency_not_signal_modulation(monkeypa
     assert captured["command_data"]["command"] == timings
 
 
-def test_learn_command_rf_requires_two_matching_captures(monkeypatch) -> None:
-    """A single noisy RF capture must not be enough to store a signal - the
-    KC868-style receivers this integration targets are known to cut each raw
-    dump at a slightly different point, so two captures must agree first."""
+def test_learn_command_rf_only_needs_one_capture(monkeypatch) -> None:
+    """A second, confirming capture used to be required, but that doesn't
+    work for devices that send a multi-repeat burst with rotating/jittering
+    content per press (e.g. Emil-Lux/Tronic sockets) - two independent
+    presses of such a remote are *expected* to differ. RF now trusts a
+    single capture, exactly like IR (just with a minimum-length check -
+    see test_learn_command_rf_capture_too_short_is_rejected)."""
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_get_receivers",
         lambda hass: ["remote.ir_receiver"],
@@ -221,17 +222,48 @@ def test_learn_command_rf_requires_two_matching_captures(monkeypatch) -> None:
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
         _queued_subscribe_receiver(
-            [
-                _FakeSignal([350, -1050, 350, -350]),
-                _FakeSignal([9000, -4500, 560, -560]),  # unrelated capture
-            ]
+            [_FakeSignal([350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350])]
         ),
+    )
+
+    manager = _manager_with_entry()
+    captured: dict = {}
+
+    async def fake_add_command(subentry, name, command_data):
+        captured["command_data"] = command_data
+
+    manager.async_add_command = fake_add_command
+
+    asyncio.run(
+        remote_module.async_learn_command(
+            hass=object(),
+            manager=manager,
+            subentry=_rf_subentry(),
+            command_name="power",
+        )
+    )
+
+    assert captured["command_data"]["command"] == [
+        350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350,
+    ]
+
+
+def test_learn_command_rf_capture_too_short_is_rejected(monkeypatch) -> None:
+    """Pure noise filter: a suspiciously short capture (e.g. a stray AGC
+    glitch) must not be stored - see validate_rf_capture_length."""
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_receivers",
+        lambda hass: ["remote.ir_receiver"],
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_subscribe_receiver",
+        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
     )
 
     manager = _manager_with_entry()
 
     async def fake_add_command(subentry, name, command_data):
-        raise AssertionError("inconsistent RF captures must not be stored")
+        raise AssertionError("a too-short RF capture must not be stored")
 
     manager.async_add_command = fake_add_command
 
@@ -245,34 +277,7 @@ def test_learn_command_rf_requires_two_matching_captures(monkeypatch) -> None:
             )
         )
 
-    assert exc_info.value.translation_key == "rf_learn_inconsistent"
-
-
-def test_learn_command_rf_second_empty_capture_raises_empty_signal(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "homeassistant.components.infrared.async_get_receivers",
-        lambda hass: ["remote.ir_receiver"],
-    )
-    monkeypatch.setattr(
-        "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver(
-            [_FakeSignal([350, -1050, 350, -350]), _FakeSignal([])]
-        ),
-    )
-
-    manager = _manager_with_entry()
-
-    with pytest.raises(Exception) as exc_info:
-        asyncio.run(
-            remote_module.async_learn_command(
-                hass=object(),
-                manager=manager,
-                subentry=_rf_subentry(),
-                command_name="power",
-            )
-        )
-
-    assert exc_info.value.translation_key == "empty_signal"
+    assert exc_info.value.translation_key == "rf_capture_too_short"
 
 
 def test_learn_command_ir_only_needs_one_capture(monkeypatch) -> None:
@@ -345,14 +350,16 @@ def test_send_output_command_rf_without_transmitter_raises() -> None:
 def test_async_capture_rf_signal_returns_timings(monkeypatch) -> None:
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
+        _queued_subscribe_receiver(
+            [_FakeSignal([350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350])]
+        ),
     )
 
     timings = asyncio.run(
         remote_module.async_capture_rf_signal(object(), "remote.ir_receiver", 10)
     )
 
-    assert timings == [350, -1050, 350, -350]
+    assert timings == [350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350]
 
 
 def test_async_capture_rf_signal_raises_on_empty_timings(monkeypatch) -> None:
@@ -369,30 +376,29 @@ def test_async_capture_rf_signal_raises_on_empty_timings(monkeypatch) -> None:
     assert exc_info.value.translation_key == "empty_signal"
 
 
-def test_check_rf_captures_match_passes_for_matching_captures() -> None:
-    manager = _manager_with_entry()
-
-    remote_module.check_rf_captures_match(
-        manager,
-        [350, -1050, 350, -350],
-        [351, -1049, 349, -351],
-        "Test RF device",
+def test_async_capture_rf_signal_raises_on_too_short_timings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_subscribe_receiver",
+        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
     )
 
-
-def test_check_rf_captures_match_raises_for_mismatched_captures() -> None:
-    manager = _manager_with_entry()
-
     with pytest.raises(Exception) as exc_info:
-        remote_module.check_rf_captures_match(
-            manager,
-            [350, -1050, 350, -350],
-            [9000, -4500, 560, -560],
-            "Test RF device",
+        asyncio.run(
+            remote_module.async_capture_rf_signal(object(), "remote.ir_receiver", 10)
         )
 
-    assert exc_info.value.translation_key == "rf_learn_inconsistent"
-    assert exc_info.value.translation_placeholders == {"device": "Test RF device"}
+    assert exc_info.value.translation_key == "rf_capture_too_short"
+
+
+def test_validate_rf_capture_length_accepts_long_enough_capture() -> None:
+    remote_module.validate_rf_capture_length([0] * 10)
+
+
+def test_validate_rf_capture_length_rejects_short_capture() -> None:
+    with pytest.raises(Exception) as exc_info:
+        remote_module.validate_rf_capture_length([0] * 9)
+
+    assert exc_info.value.translation_key == "rf_capture_too_short"
 
 
 def test_build_rf_command_data_shape() -> None:

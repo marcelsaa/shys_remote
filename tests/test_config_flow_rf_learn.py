@@ -1,42 +1,25 @@
-"""Regression tests for the two-step RF learn flow in config_flow.py.
+"""Tests for the (now medium-agnostic) learn-command step in config_flow.py.
 
 Unlike test_config_flow_validation.py (which only exercises module-level
 helper functions, since ConfigSubentryFlow is stubbed as an empty class in
 this dev environment - see its docstring), these tests call
-DeviceSubentryFlowHandler's async_step_learn_command/
-async_step_learn_command_confirm directly as unbound functions
-(``DeviceSubentryFlowHandler.async_step_learn_command(fake, ...)``) against
-a minimal duck-typed double that implements just the FlowHandler surface
-those methods actually use: ``context``, ``async_show_form`` and
-``async_abort``. That's enough to verify the real step logic without
+DeviceSubentryFlowHandler's async_step_learn_command/async_step_delete_command
+directly as unbound functions (``DeviceSubentryFlowHandler.async_step_learn_command
+(fake, ...)``) against a minimal duck-typed double that implements just the
+FlowHandler surface those methods actually use: ``context``, ``async_show_form``
+and ``async_abort``. That's enough to verify the real step logic without
 needing Home Assistant's real data_entry_flow runtime.
 
-Tests call the *public* async_step_learn_command/async_step_learn_command_confirm
-(not the inner _async_step_learn_command*/impl methods) on purpose: an
-earlier version of this file called the inner methods directly, and its
-``_FakeFlow`` double implemented a ``_set_confirm_only()`` stub "helpfully"
-so the tests would pass - except _set_confirm_only() only exists on
-homeassistant.config_entries.ConfigFlow, not on ConfigSubentryFlow (verified
-against the real HA core source), so the real code crashed with
-AttributeError on every real subentry flow while these tests stayed green.
-Going through the public wrapper (which is a thin try/except around the
-inner implementation - see async_step_learn_command's docstring) and *not*
-inventing methods on the fake that don't exist on the real base class is
-what would have caught that. Don't add methods to _FakeFlow beyond what
-ConfigSubentryFlow actually provides.
-
-RF learning used to be driven by Home Assistant's show_progress/
-progress_task mechanism (to show "press now" / "press again" screens in
-between the two required captures), but that turned out to be unreliable
-for a *second* consecutive progress step within one flow
-(home-assistant/core#95749: the flow gets re-entered - and the
-still-pending task's result read - before that second task has actually
-finished listening, so it fails immediately without ever really waiting).
-It was replaced with two plain form-based steps: async_step_learn_command
-blocks synchronously on the first capture and, on success, shows a
-confirmation form; async_step_learn_command_confirm blocks on the second
-once that form is submitted. These tests cover both steps and the handoff
-between them.
+RF learning previously needed a second, confirming capture and its own
+config-flow step (async_step_learn_command_confirm) - removed because it
+doesn't work for devices that send a multi-repeat burst with rotating/
+jittering content per press (e.g. Emil-Lux/Tronic sockets): two independent
+presses of such a remote are *expected* to differ, so comparing them only
+produced false "doesn't match" failures. RF and IR now both go through
+async_learn_command() with a single capture (see test_rf_dispatch.py for the
+capture/length-validation logic itself); config_flow.py no longer branches
+on medium at all, so there's little left to test at this layer beyond "it
+still delegates correctly" and the safety nets that don't depend on medium.
 """
 
 from __future__ import annotations
@@ -52,23 +35,22 @@ DeviceSubentryFlowHandler = config_flow.DeviceSubentryFlowHandler
 
 
 class _FakeFlow:
-    """Minimal FlowHandler double: just enough for the learn-command steps.
+    """Minimal FlowHandler double: just enough for the learn-command step.
 
-    _learn_command_form is bound from the real DeviceSubentryFlowHandler
-    class (not reimplemented here), so these tests exercise the actual
-    production code for it too. Only implement methods here that really
-    exist on ConfigSubentryFlow - see the module docstring for why.
+    _async_step_learn_command and _learn_command_form are bound from the
+    real DeviceSubentryFlowHandler class (not reimplemented here), so these
+    tests exercise the actual production code for them too. Only implement
+    methods here that really exist on ConfigSubentryFlow otherwise - a
+    previous version of this file stubbed a ConfigFlow-only method
+    (_set_confirm_only) "helpfully", which let a real AttributeError bug
+    slip through undetected. Don't repeat that.
     """
 
     def __init__(self, manager: RemoteManager) -> None:
         self.context: dict = {}
-        self.hass = object()
+        self.hass = SimpleNamespace(config=SimpleNamespace(language="en"))
         self._manager = manager
-        for name in (
-            "_learn_command_form",
-            "_async_step_learn_command",
-            "_async_step_learn_command_confirm",
-        ):
+        for name in ("_async_step_learn_command", "_learn_command_form"):
             setattr(
                 self, name, types.MethodType(getattr(DeviceSubentryFlowHandler, name), self)
             )
@@ -108,17 +90,6 @@ def _rf_subentry() -> SimpleNamespace:
     )
 
 
-def _ir_subentry() -> SimpleNamespace:
-    return SimpleNamespace(
-        data={
-            "transmitter_entity_id": "remote.ir_blaster",
-            "receiver_entity_id": "remote.ir_receiver",
-        },
-        subentry_id="dev2",
-        title="Test IR device",
-    )
-
-
 def _manager() -> RemoteManager:
     manager = RemoteManager.__new__(RemoteManager)
     manager.commands = {}
@@ -153,90 +124,18 @@ class _FakeSignal:
         self.modulation = 38000
 
 
-def test_learn_command_rf_first_capture_shows_confirm_step(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
-    )
-    manager = _manager()
-    flow = _flow(_rf_subentry(), manager, monkeypatch)
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
-            flow, {"name": "power", "timeout": 10, "direction": "output"}
-        )
-    )
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "learn_command_confirm"
-    assert flow.context[config_flow.CTX_RF_LEARN_INPUT] == {
-        "name": "power",
-        "timeout": 10,
-        "direction": "output",
-    }
-    assert flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] == [350, -1050, 350, -350]
-
-
-def test_learn_command_rf_first_capture_failure_shows_error(monkeypatch) -> None:
-    def fake_subscribe_receiver(hass, entity_id, callback_):
-        from homeassistant.exceptions import HomeAssistantError
-
-        raise HomeAssistantError("receiver gone")
-
-    monkeypatch.setattr(
-        "homeassistant.components.infrared.async_subscribe_receiver",
-        fake_subscribe_receiver,
-    )
-    manager = _manager()
-    flow = _flow(_rf_subentry(), manager, monkeypatch)
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
-            flow, {"name": "power", "timeout": 10, "direction": "output"}
-        )
-    )
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "learn_command"
-    assert result["errors"]
-    assert config_flow.CTX_RF_LEARN_INPUT not in flow.context
-
-
-def test_learn_command_ir_unaffected(monkeypatch) -> None:
-    """IR must still go through async_learn_command directly - single
-    capture, no confirm step, no RF context keys touched."""
+def test_learn_command_rf_delegates_to_async_learn_command(monkeypatch) -> None:
+    """RF now takes the exact same single-capture path as IR."""
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_get_receivers",
         lambda hass: ["remote.ir_receiver"],
     )
     monkeypatch.setattr(
-        "homeassistant.components.infrared.async_get_emitters",
-        lambda hass: ["remote.ir_blaster"],
-    )
-    monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver([_FakeSignal([9000, -4500, 560, -560])]),
+        _queued_subscribe_receiver(
+            [_FakeSignal([350, -1050, 350, -350, 350, -1050, 350, -350, 350, -350])]
+        ),
     )
-    manager = _manager()
-
-    async def fake_add_command(subentry, name, command_data):
-        pass
-
-    manager.async_add_command = fake_add_command
-    flow = _flow(_ir_subentry(), manager, monkeypatch)
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command(
-            flow, {"name": "power", "timeout": 10, "direction": "output"}
-        )
-    )
-
-    assert result["type"] == "abort"
-    assert result["reason"] == "signal_learned"
-    assert config_flow.CTX_RF_LEARN_INPUT not in flow.context
-
-
-def test_learn_command_confirm_match_stores_and_aborts(monkeypatch) -> None:
     manager = _manager()
     stored: dict = {}
 
@@ -246,20 +145,11 @@ def test_learn_command_confirm_match_stores_and_aborts(monkeypatch) -> None:
 
     manager.async_add_command = fake_add_command
     flow = _flow(_rf_subentry(), manager, monkeypatch)
-    flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
-        "name": "power",
-        "timeout": 10,
-        "direction": "output",
-    }
-    flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
-
-    monkeypatch.setattr(
-        "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver([_FakeSignal([351, -1049, 349, -351])]),
-    )
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler.async_step_learn_command(
+            flow, {"name": "power", "timeout": 10, "direction": "output"}
+        )
     )
 
     assert result == {
@@ -268,75 +158,36 @@ def test_learn_command_confirm_match_stores_and_aborts(monkeypatch) -> None:
         "description_placeholders": {"name": "power", "device": "Test RF device"},
     }
     assert stored["name"] == "power"
-    assert stored["command_data"]["command"] == [350, -1050, 350, -350]
-    assert config_flow.CTX_RF_LEARN_INPUT not in flow.context
-    assert config_flow.CTX_RF_LEARN_FIRST_TIMINGS not in flow.context
+    assert stored["command_data"]["medium"] == "rf"
 
 
-def test_learn_command_confirm_mismatch_returns_to_learn_command_form(monkeypatch) -> None:
-    manager = _manager()
-    flow = _flow(_rf_subentry(), manager, monkeypatch)
-    flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
-        "name": "power",
-        "timeout": 10,
-        "direction": "output",
-    }
-    flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
-
+def test_learn_command_rf_short_capture_shows_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "homeassistant.components.infrared.async_get_receivers",
+        lambda hass: ["remote.ir_receiver"],
+    )
     monkeypatch.setattr(
         "homeassistant.components.infrared.async_subscribe_receiver",
-        _queued_subscribe_receiver([_FakeSignal([9000, -4500, 560, -560])]),
+        _queued_subscribe_receiver([_FakeSignal([350, -1050, 350, -350])]),
     )
+    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
 
     result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
+        DeviceSubentryFlowHandler.async_step_learn_command(
+            flow, {"name": "power", "timeout": 10, "direction": "output"}
+        )
     )
 
     assert result["type"] == "form"
     assert result["step_id"] == "learn_command"
-    assert result["errors"] == {"base": "rf_learn_inconsistent"}
-
-
-def test_learn_command_confirm_without_prior_context_falls_back(monkeypatch) -> None:
-    """Reaching the confirm step without a stashed first capture (flow
-    state desync) must not crash - it should hand back a readable error."""
-    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
-    )
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "learn_command"
-    assert result["errors"] == {"base": "learn_failed"}
-
-
-def test_learn_command_confirm_renders_form_before_submission(monkeypatch) -> None:
-    """A GET-style render (user_input=None) must just show the confirm
-    form, not attempt a capture yet - and must not need any data_schema
-    or ConfigFlow-only helper (like _set_confirm_only, which doesn't exist
-    on ConfigSubentryFlow) to do so."""
-    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
-    flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
-        "name": "power",
-        "timeout": 10,
-        "direction": "output",
-    }
-    flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, None)
-    )
-
-    assert result["type"] == "form"
-    assert result["step_id"] == "learn_command_confirm"
+    assert result["errors"] == {"base": "rf_capture_too_short"}
 
 
 def test_learn_command_wrapper_catches_unanticipated_exception(monkeypatch) -> None:
-    """The public async_step_learn_command must never let an exception it
-    didn't specifically anticipate (e.g. _get_reconfigure_subentry itself
-    failing) turn into Home Assistant's generic "Unknown error occurred" -
-    it must fall back to a translated abort instead."""
+    """async_step_learn_command must never let an exception it didn't
+    specifically anticipate (e.g. _get_reconfigure_subentry itself failing)
+    turn into Home Assistant's generic "Unknown error occurred" - it must
+    fall back to a translated abort instead."""
     flow = _flow(_rf_subentry(), _manager(), monkeypatch)
 
     def _boom():
@@ -348,31 +199,6 @@ def test_learn_command_wrapper_catches_unanticipated_exception(monkeypatch) -> N
         DeviceSubentryFlowHandler.async_step_learn_command(
             flow, {"name": "power", "timeout": 10, "direction": "output"}
         )
-    )
-
-    assert result == {
-        "type": "abort",
-        "reason": "learn_step_failed",
-        "description_placeholders": None,
-    }
-
-
-def test_learn_command_confirm_wrapper_catches_unanticipated_exception(monkeypatch) -> None:
-    flow = _flow(_rf_subentry(), _manager(), monkeypatch)
-    flow.context[config_flow.CTX_RF_LEARN_INPUT] = {
-        "name": "power",
-        "timeout": 10,
-        "direction": "output",
-    }
-    flow.context[config_flow.CTX_RF_LEARN_FIRST_TIMINGS] = [350, -1050, 350, -350]
-
-    def _boom():
-        raise RuntimeError("registry lookup exploded")
-
-    flow._get_reconfigure_subentry = _boom
-
-    result = _run(
-        DeviceSubentryFlowHandler.async_step_learn_command_confirm(flow, {})
     )
 
     assert result == {
@@ -383,9 +209,10 @@ def test_learn_command_confirm_wrapper_catches_unanticipated_exception(monkeypat
 
 
 def test_delete_command_empty_does_not_use_set_confirm_only(monkeypatch) -> None:
-    """async_step_delete_command's "no signals" dead end had the exact same
-    _set_confirm_only() bug as the learn-confirm step (fixed alongside it,
-    same root cause) - it must render without needing that method."""
+    """async_step_delete_command's "no signals" dead end had the same
+    _set_confirm_only() bug the learn-confirm step used to have (that step
+    is gone now, but this one predates it and had the identical issue) - it
+    must render without needing that ConfigFlow-only method."""
     manager = _manager()
     manager.commands = {"dev1": {}}
     flow = _flow(_rf_subentry(), manager, monkeypatch)

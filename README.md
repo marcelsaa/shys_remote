@@ -239,12 +239,14 @@ Since learning captures whatever the receiver hardware reports, byte for byte, a
 is stored and replayed just as faithfully as a good one. In practice, on cheap 433 MHz OOK
 receiver modules:
 
-- SHYS Remote now requires **two consecutive captures that agree** (within the integration's
-  configured **Signal match tolerance**) before it stores an RF signal — press the remote
-  button twice in a row when learning. This catches the common failure mode where AGC noise
-  or the receiver's idle/gap threshold cuts each raw dump at a different point, so every
-  press looks like a different signal. If learning keeps failing with "captures did not
-  match", the receiver itself is too noisy to learn from reliably as configured — see below.
+- RF learning takes a single capture — **hold the button down** until the signal is
+  captured, rather than tapping it. Many remotes (e.g. Emil-Lux/Tronic-style sockets) send
+  a burst of several repeated cycles per press, sometimes with rotating/jittering content
+  between repeats; holding the button lets the ESPHome receiver's own idle timeout capture
+  the *whole* burst as one raw dump instead of cutting it off after the first repeat. SHYS
+  Remote only rejects a capture that's implausibly short (a stray AGC glitch, not a protocol
+  check) — it does not compare it against a second attempt, since two independent presses of
+  a rotating-code remote are expected to differ.
 - Move the receiver antenna away from the ESP32/WiFi/USB noise sources, and closer to
   the remote during learning.
 - On ESP32, a dedicated receiver chip (e.g. **CC1101**) generally decodes far more
@@ -252,8 +254,8 @@ receiver modules:
   because it does its own signal conditioning instead of relying on the ESP32 to sample a
   noisy analog line.
 - Check the `remote_receiver`'s `filter`/`idle` timing in your ESPHome YAML — too short an
-  `idle` cuts a real code into multiple fragments; too long merges unrelated noise into one
-  capture.
+  `idle` cuts a real multi-repeat burst into fragments (only the first repeat gets learned);
+  too long merges unrelated noise into one capture.
 - On the transmit side, make sure the RF `remote_transmitter` has `carrier_duty_percent: 100%`
   (see the example above) — RF hardware does its own carrier generation, and any other duty
   cycle tells the ESP32 to additionally modulate the line in software, which corrupts the
@@ -403,14 +405,13 @@ Select **output**, **input** or **both**, submit the form, then press the button
 the physical remote within the timeout.
 Learning is only available when a receiver is configured on the device.
 
-For **RF devices**, learning is two form steps: submitting the name/direction/timeout
-form waits for a first capture, and on success shows a second, one-click **Confirm
-signal** form — submitting that waits for a second capture. Both captures must agree
-(within the integration's **Signal match tolerance** option) before the signal is
-stored — see
+For **RF devices**, hold the button down until the signal is captured, rather than
+tapping it — many remotes send a burst of several repeated cycles per press, and holding
+the button lets the receiver's raw capture include the whole burst instead of just the
+first repeat. RF learning is a single capture, same as IR; it's only rejected if
+implausibly short (a stray glitch, not a protocol check) — see
 ["If a learned RF signal doesn't control the device"](#if-a-learned-rf-signal-doesnt-control-the-device)
-for what a persistent mismatch usually means. IR devices are unaffected by this and only
-need a single capture, as before.
+for further troubleshooting.
 
 <p align="center">
   <img src="assets/device_with_in_and_out.png" alt="Device with output button and input binary sensor" width="480">

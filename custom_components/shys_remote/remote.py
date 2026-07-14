@@ -15,7 +15,6 @@ from .const import (
     ATTR_MEDIUM,
     ATTR_NAME,
     COMMAND_TYPE_RAW,
-    CONF_MATCH_TOLERANCE,
     CONF_RF_FREQUENCY,
     CONF_SEND_REPEAT_COUNT,
     CONF_SEND_REPEAT_DELAY_MS,
@@ -26,10 +25,9 @@ from .const import (
     DIRECTION_INPUT,
     DIRECTION_OUTPUT,
     DOMAIN,
+    MIN_RF_CAPTURE_PULSES,
     get_device_send_options,
-    get_integration_options,
 )
-from .signal_matching import captures_match
 from .signal_transport import (
     SIGNAL_BACKEND_HOMEASSISTANT_INFRARED,
     SIGNAL_BACKEND_HOMEASSISTANT_RADIO_FREQUENCY,
@@ -108,12 +106,19 @@ async def async_capture_rf_signal(
 ) -> list[int]:
     """Wait for one RF capture and return its raw timings.
 
-    Shared by the ``shys_remote.learn`` service path (async_learn_command,
-    which needs two of these back to back with no UI in between) and the
-    config flow's two-stage learn UI (which shows progress between calls).
     Raises ServiceValidationError - "learn_timeout" via async_wait_for_signal,
-    or "empty_signal" here - either way, the caller doesn't need to know why
-    a capture failed to show a sensible error.
+    "empty_signal" or "rf_capture_too_short" here - either way, the caller
+    doesn't need to know why a capture failed to show a sensible error.
+
+    A single capture is trusted as-is (no second, confirming capture). RF
+    devices with rotating codes or a multi-repeat burst per button press
+    (e.g. Emil-Lux/Tronic sockets sending ~4 cycles per press) don't produce
+    two independent captures that agree closely enough for a comparison to
+    be meaningful - two separate presses of a rotating-code remote are
+    *supposed* to differ. validate_rf_capture_length() is a much weaker,
+    protocol-agnostic sanity check instead: it only rejects captures too
+    short to plausibly be a real signal (a stray AGC glitch), not ones that
+    merely differ from a previous capture.
     """
     signal = await async_wait_for_signal(hass, receiver, timeout)
     if not signal.timings:
@@ -121,28 +126,20 @@ async def async_capture_rf_signal(
             translation_domain=DOMAIN,
             translation_key="empty_signal",
         )
-    return list(signal.timings)
+    timings = list(signal.timings)
+    validate_rf_capture_length(timings)
+    return timings
 
 
-def check_rf_captures_match(
-    manager: RemoteManager,
-    first: list[int],
-    second: list[int],
-    device_title: str,
-) -> None:
-    """Raise ServiceValidationError if two RF captures don't agree.
+def validate_rf_capture_length(timings: list[int]) -> None:
+    """Raise ServiceValidationError if a capture is implausibly short.
 
-    Cheap OOK RF receivers are prone to AGC noise and an idle threshold that
-    cuts each raw dump at a slightly different point, so - unlike a
-    demodulated IR receiver - a single RF capture isn't trustworthy on its
-    own. Reuses the same tolerance as input signal matching.
+    Pure noise filter, not a protocol check - see MIN_RF_CAPTURE_PULSES.
     """
-    tolerance = float(get_integration_options(manager.entry)[CONF_MATCH_TOLERANCE])
-    if not captures_match(first, second, tolerance):
+    if len(timings) < MIN_RF_CAPTURE_PULSES:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
-            translation_key="rf_learn_inconsistent",
-            translation_placeholders={"device": device_title},
+            translation_key="rf_capture_too_short",
         )
 
 
@@ -213,14 +210,8 @@ async def async_learn_command(
         )
 
     if medium == SIGNAL_MEDIUM_RF:
-        # This service call has no UI to show progress in between the two
-        # captures - see DeviceSubentryFlowHandler in config_flow.py for the
-        # config-flow equivalent, which drives the same two helpers with a
-        # progress screen shown between them.
-        first_timings = await async_capture_rf_signal(hass, receiver, timeout)
-        second_timings = await async_capture_rf_signal(hass, receiver, timeout)
-        check_rf_captures_match(manager, first_timings, second_timings, subentry.title)
-        command_data = build_rf_command_data(subentry, direction, first_timings)
+        timings = await async_capture_rf_signal(hass, receiver, timeout)
+        command_data = build_rf_command_data(subentry, direction, timings)
     else:
         signal = await async_wait_for_signal(hass, receiver, timeout)
         if not signal.timings:

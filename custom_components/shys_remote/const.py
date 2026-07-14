@@ -28,6 +28,12 @@ DEFAULT_SEND_REPEAT_DELAY_MS = 45
 DEFAULT_RF_SEND_REPEAT_COUNT = 10
 DEFAULT_RF_SEND_REPEAT_DELAY_MS = 10
 
+# Pure noise filter for a learned RF capture - not a protocol length
+# requirement. A single AGC glitch or spurious pulse can be reported as a
+# 1-2 entry "signal"; anything that short is almost certainly noise, not a
+# real remote. Deliberately low so genuinely short fixed codes still learn.
+MIN_RF_CAPTURE_PULSES = 10
+
 DIRECTION_OUTPUT = "output"
 DIRECTION_INPUT = "input"
 DIRECTION_BOTH = "both"
